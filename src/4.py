@@ -18,77 +18,10 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import time
 from tqdm import tqdm
+from utils import *
 
-# --- 1. PARÁMETROS GLOBALES ---
-# Parámetros para el análisis estadístico
-N_STATS = 1000       # Un tamaño de red manejable para múltiples corridas
-NUM_RUNS = 100       # Número de realizaciones estadísticas (aumentar a 1000 para resultados finales)
-M_SCALE_FREE = 3
-
-# Parámetros de la Dinámica
-OMEGA_MU = 0.0
-OMEGA_SIGMA = 0.5
-T_TRANSIENT = 5.0    # Tiempo transitorio (descartado)
-T_MEASURE = 5.0      # Tiempo de medición para calcular r
-DT = 0.01
-
-# Parámetros del barrido y cálculo de Kc
-K_VALUES_SWEEP = np.linspace(0, 5.0, 50)
-R_THRESHOLD = 0.5    # Umbral para definir la sincronización
-
-# --- 2. FUNCIONES DE SIMULACIÓN Y ANÁLISIS ---
-
-def kuramoto_odes_gpu(thetas, K, A_sparse, omegas, degrees):
-    """
-    Calcula la derivada de las fases en la GPU usando operaciones sparse.
-    Evita crear la matriz completa NxN de phase_diffs.
-    """
-    # Para redes sparse, usar multiplicación matriz-vector es más eficiente
-    sin_thetas = cp.sin(thetas)
-    cos_thetas = cp.cos(thetas)
-
-    # Calcular las sumas ponderadas usando la matriz de adyacencia
-    sum_sin = A_sparse @ sin_thetas
-    sum_cos = A_sparse @ cos_thetas
-
-    # Calcular la derivada usando la identidad:
-    # sum(sin(theta_j - theta_i)) = cos(theta_i)*sum(sin(theta_j)) - sin(theta_i)*sum(cos(theta_j))
-    interactions = cp.cos(thetas) * sum_sin - cp.sin(thetas) * sum_cos
-
-    # Evitar división por cero
-    safe_degrees = cp.maximum(degrees, 1.0)
-    dthetas_dt = omegas + (K / safe_degrees) * interactions
-
-    return dthetas_dt
-
-def run_simulation_and_get_r(K, A_sparse, thetas_0, omegas, degrees):
-    """
-    Resuelve las EDOs usando el método de Euler con optimizaciones.
-    Incluye fase transitoria y medición del parámetro de orden.
-    """
-    num_steps_transient = int(T_TRANSIENT / DT)
-    num_steps_measure = int(T_MEASURE / DT)
-    thetas_current = thetas_0.copy()
-
-    # Fase transitoria (no medimos r aquí)
-    for _ in range(num_steps_transient):
-        dthetas = kuramoto_odes_gpu(thetas_current, K, A_sparse, omegas, degrees)
-        thetas_current += dthetas * DT
-
-    # Fase de medición - calculamos r promedio
-    r_values = []
-    for _ in range(num_steps_measure):
-        dthetas = kuramoto_odes_gpu(thetas_current, K, A_sparse, omegas, degrees)
-        thetas_current += dthetas * DT
-
-        # Calcular r cada 10 pasos para promediar
-        if _ % 10 == 0:
-            exp_thetas = cp.exp(1j * thetas_current)
-            r = cp.abs(cp.mean(exp_thetas))
-            r_values.append(r)
-
-    # Devolver el promedio de r en el estado estacionario
-    return cp.mean(cp.array(r_values))
+R_THRESHOLD = 0.5
+NUM_RUNS = 1000
 
 def find_kc_for_single_run(G, omegas_0, thetas_0):
     """
@@ -99,7 +32,7 @@ def find_kc_for_single_run(G, omegas_0, thetas_0):
 
     r_values = []
     for K in K_VALUES_SWEEP:
-        r = run_simulation_and_get_r(K, A_gpu, thetas_0, omegas_0, degrees_gpu)
+        r, _ = run_simulation(K, A_gpu, thetas_0, omegas_0, degrees_gpu)
         r_values.append(r.get())
 
     # Encuentra el primer K que cruza el umbral
@@ -108,7 +41,7 @@ def find_kc_for_single_run(G, omegas_0, thetas_0):
 
 # --- 3. SCRIPT PRINCIPAL DE EJECUCIÓN ---
 if __name__ == "__main__":
-    print(f"Iniciando análisis estadístico con {NUM_RUNS} corridas para N={N_STATS}...")
+    print(f"Iniciando análisis estadístico con {NUM_RUNS} corridas para N={N}...")
     kc_results = []
     start_time = time.time()
 

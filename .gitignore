@@ -1,4 +1,5 @@
 venv
+*.pyc
 
 # LaTex
 *.aux
@@ -10,3 +11,4 @@ venv
 *.fls
 *.fdb_latexmk
 *.synctex.gz
+

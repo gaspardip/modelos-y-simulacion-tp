@@ -16,35 +16,12 @@ import matplotlib.pyplot as plt
 import time
 from tqdm import tqdm
 from cupyx.scipy import sparse
-
-# --- 1. PARÁMETROS GLOBALES ---
-N = 5000
-M_SCALE_FREE = 3
-OMEGA_MU = 0.0
-OMEGA_SIGMA = 0.5
-T_TRANSIENT = 10.0  # Fase transitoria separada
-T_MEASUREMENT = 10.0  # Fase de medición
-DT = 0.02  # Aumentado para eficiencia
-K_VALUES_SWEEP = np.linspace(0, 5, 50)
+from utils import *
 
 # Parámetros de visualización optimizada
 TOP_HUBS_PERCENT = 0.1  # Solo mostrar top 10% de hubs
 MIN_NODES_TO_SHOW = 50  # Mínimo de nodos a mostrar
 
-# --- 2. FUNCIONES DE SIMULACIÓN Y ANÁLISIS OPTIMIZADAS ---
-
-def kuramoto_odes_gpu_sparse(thetas, K, A_sparse, omegas, degrees):
-    """Versión optimizada usando matrices sparse"""
-    # Calcular diferencias de fase solo para conexiones existentes
-    thetas_expanded = cp.broadcast_to(thetas, (len(thetas), len(thetas)))
-    phase_diffs = thetas_expanded - thetas_expanded.T
-
-    # Aplicar solo a elementos no cero (conexiones reales)
-    sin_diffs = cp.sin(phase_diffs)
-    interactions = A_sparse.multiply(sin_diffs)
-    interaction_sum = cp.array(interactions.sum(axis=1)).flatten()
-
-    return omegas + (K / degrees) * interaction_sum
 
 def run_optimized_sweep_and_get_dynamics(G, thetas_0, omegas):
     """Versión optimizada del barrido con separación de fases"""
@@ -59,25 +36,25 @@ def run_optimized_sweep_and_get_dynamics(G, thetas_0, omegas):
     degrees_gpu[degrees_gpu == 0] = 1
 
     num_steps_transient = int(T_TRANSIENT / DT)
-    num_steps_measurement = int(T_MEASUREMENT / DT)
+    num_steps_measurement = int(T_MEASURE / DT)
 
     for K in tqdm(K_VALUES_SWEEP, desc="Barrido optimizado de K"):
         thetas_current = thetas_0.copy()
 
         # FASE 1: Transitoria (sin guardar estados)
         for step in range(num_steps_transient):
-            dthetas = kuramoto_odes_gpu_sparse(thetas_current, K, A_sparse, omegas, degrees_gpu)
+            dthetas = kuramoto_odes(thetas_current, K, A_sparse, omegas, degrees_gpu)
             thetas_current += dthetas * DT
 
         # FASE 2: Medición (calcular frecuencias directamente)
         thetas_start = thetas_current.copy()
 
         for step in range(num_steps_measurement):
-            dthetas = kuramoto_odes_gpu_sparse(thetas_current, K, A_sparse, omegas, degrees_gpu)
+            dthetas = kuramoto_odes(thetas_current, K, A_sparse, omegas, degrees_gpu)
             thetas_current += dthetas * DT
 
         # Calcular frecuencias efectivas directamente
-        effective_freqs = (thetas_current - thetas_start) / T_MEASUREMENT
+        effective_freqs = (thetas_current - thetas_start) / T_MEASURE
         effective_freqs_list.append(effective_freqs)
 
         # No necesitamos módulo para calcular r
