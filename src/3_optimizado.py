@@ -1,12 +1,14 @@
 # ==============================================================================
 # SCRIPT OPTIMIZADO: PIPELINE COMPLETO DE ANÁLISIS CON OPTIMIZACIONES
 # ==============================================================================
+# Propósito: Analizar frecuencias efectivas y visualización filtrada de hubs.
+# Refactorizado para usar las utilidades optimizadas de utils.py.
+#
 # Optimizaciones implementadas:
-# 1. Matrices sparse para redes libres de escala
-# 2. Cálculo eficiente de frecuencias sin almacenamiento intermedio
-# 3. Separación de fase transitoria y de medición
-# 4. Visualización filtrada (solo hubs principales)
-# 5. Eliminación de cálculos innecesarios
+# 1. Uso de utils.py para simulaciones optimizadas
+# 2. Cálculo eficiente de frecuencias efectivas
+# 3. Visualización filtrada (solo hubs principales)
+# 4. Integración con funciones estándar del proyecto
 # ==============================================================================
 
 import cupy as cp
@@ -14,59 +16,58 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
-from tqdm import tqdm
-from cupyx.scipy import sparse
-from utils import *
+from utils import (
+    generate_random_network, run_full_analysis, find_kc,
+    K_VALUES_SWEEP, prepare_sparse_matrix, run_simulation
+)
 
 # Parámetros de visualización optimizada
 TOP_HUBS_PERCENT = 0.1  # Solo mostrar top 10% de hubs
 MIN_NODES_TO_SHOW = 50  # Mínimo de nodos a mostrar
 
-
 def run_optimized_sweep_and_get_dynamics(G, thetas_0, omegas):
-    """Versión optimizada del barrido con separación de fases"""
-    print("Iniciando barrido optimizado con matrices sparse...")
-    r_results, final_thetas_list, effective_freqs_list = [], [], []
-
-    # Crear matriz sparse
-    adj_matrix = nx.to_scipy_sparse_array(G, format='csr')
-    A_sparse = sparse.csr_matrix(adj_matrix, dtype=cp.float32)
-
-    degrees_gpu = cp.array([d for n, d in G.degree()], dtype=cp.float32)
-    degrees_gpu[degrees_gpu == 0] = 1
-
-    num_steps_transient = int(T_TRANSIENT / DT)
-    num_steps_measurement = int(T_MEASURE / DT)
-
-    for K in tqdm(K_VALUES_SWEEP, desc="Barrido optimizado de K"):
-        thetas_current = thetas_0.copy()
-
-        # FASE 1: Transitoria (sin guardar estados)
-        for step in range(num_steps_transient):
-            dthetas = kuramoto_odes(thetas_current, K, A_sparse, omegas, degrees_gpu)
-            thetas_current += dthetas * DT
-
-        # FASE 2: Medición (calcular frecuencias directamente)
-        thetas_start = thetas_current.copy()
-
-        for step in range(num_steps_measurement):
-            dthetas = kuramoto_odes(thetas_current, K, A_sparse, omegas, degrees_gpu)
-            thetas_current += dthetas * DT
-
-        # Calcular frecuencias efectivas directamente
-        effective_freqs = (thetas_current - thetas_start) / T_MEASURE
-        effective_freqs_list.append(effective_freqs)
-
-        # No necesitamos módulo para calcular r
-        final_thetas_list.append(thetas_current)
-        r_results.append(cp.abs(cp.mean(cp.exp(1j * thetas_current))).get())
-
-    return np.array(r_results), final_thetas_list, effective_freqs_list
-
-def find_kc_from_sweep(k_values, r_values, threshold=0.5):
-    """Encuentra Kc basado en el threshold de sincronización"""
-    indices = np.where(r_values > threshold)[0]
-    return k_values[indices[0]] if len(indices) > 0 else None
+    """
+    Versión optimizada del barrido usando utils.py para obtener dinámicas.
+    Calcula frecuencias efectivas para análisis adicional.
+    """
+    print("Iniciando barrido optimizado usando utils.py...")
+    
+    # Usar run_full_analysis de utils.py para obtener estados clave
+    results = run_full_analysis(G, thetas_0, omegas)
+    r_values = results['r_values']
+    kc_value = results['kc_value']
+    A_sparse = results['A_sparse']
+    degrees = results['degrees']
+    
+    # Calcular frecuencias efectivas para puntos clave
+    effective_freqs_dict = {}
+    
+    if kc_value is not None:
+        # Calcular frecuencias efectivas para los estados clave
+        key_K_values = [
+            (0.5 * kc_value, "desync"),
+            (1.0 * kc_value, "partial"), 
+            (1.8 * kc_value, "sync")
+        ]
+        
+        for K, state_name in key_K_values:
+            print(f"  Calculando frecuencias efectivas para estado {state_name} (K={K:.3f})...")
+            
+            # Simular y calcular frecuencias efectivas
+            thetas_start = thetas_0.copy()
+            r, thetas_final, _ = run_simulation(K, A_sparse, thetas_start, omegas, degrees)
+            
+            # Calcular frecuencias efectivas como diferencia de fases normalizada
+            from utils import T_MEASURE
+            effective_freqs = (thetas_final - thetas_start) / T_MEASURE
+            effective_freqs_dict[state_name] = {
+                'K': K,
+                'r': r.get(),
+                'thetas': thetas_final,
+                'effective_freqs': effective_freqs
+            }
+    
+    return r_values, kc_value, effective_freqs_dict
 
 def get_filtered_nodes_for_visualization(G, top_percent=0.1, min_nodes=50):
     """Filtra nodos para visualización: solo hubs principales"""
@@ -124,19 +125,34 @@ def visualize_optimized_final_state(G, effective_freqs_gpu, title, K, r_global):
     plt.tight_layout()
     plt.show()
 
-def plot_optimization_comparison():
+def plot_optimization_comparison(r_values, kc_calculated):
     """Gráfico de curva r vs K con información de optimización"""
     plt.figure(figsize=(12, 8))
     plt.plot(K_VALUES_SWEEP, r_values, 'b-', linewidth=2, label='Parámetro de orden r')
 
-    if Kc_calculated is not None:
-        plt.axvline(x=Kc_calculated, color='red', linestyle='--', linewidth=2,
-                   label=f'Kc crítico = {Kc_calculated:.3f}')
-        plt.axhline(y=0.5, color='gray', linestyle=':', alpha=0.7, label='Threshold = 0.5')
+    if kc_calculated is not None:
+        plt.axvline(x=kc_calculated, color='red', linestyle='--', linewidth=2,
+                   label=f'Kc crítico = {kc_calculated:.3f}')
+        
+        # Marcar los puntos de análisis
+        analysis_points = [
+            (0.5 * kc_calculated, 'Desincronizado'),
+            (1.0 * kc_calculated, 'En Kc'),
+            (1.8 * kc_calculated, 'Sincronizado')
+        ]
+        
+        colors = ['green', 'red', 'purple']
+        for i, (K_point, label) in enumerate(analysis_points):
+            plt.axvline(x=K_point, color=colors[i], linestyle=':', alpha=0.7, 
+                       label=f'{label} (K={K_point:.2f})')
+
+    from utils import R_THRESHOLD
+    plt.axhline(y=R_THRESHOLD, color='gray', linestyle=':', alpha=0.7, 
+               label=f'Threshold = {R_THRESHOLD}')
 
     plt.xlabel('Acoplamiento K', fontsize=14)
     plt.ylabel('Parámetro de orden r', fontsize=14)
-    plt.title('Curva de Sincronización Optimizada\n(Matrices Sparse + Fases Separadas)', fontsize=16)
+    plt.title('Curva de Sincronización Optimizada\n(Usando utils.py + Análisis de Frecuencias)', fontsize=16)
     plt.grid(True, alpha=0.3)
     plt.legend(fontsize=12)
     plt.xlim(0, 5)
@@ -147,51 +163,53 @@ def plot_optimization_comparison():
 # --- 3. SCRIPT PRINCIPAL OPTIMIZADO ---
 if __name__ == "__main__":
     # --- PASO 0: Generación de la Red y Datos Iniciales ---
-    print(f"Generando Red Libre de Escala Optimizada (N={N})...")
-    G_visual = nx.barabasi_albert_graph(N, M_SCALE_FREE, seed=42)
+    G, omegas, thetas = generate_random_network(seed=True)
+    
+    print(f"\nEstadísticas de la red:")
+    print(f"- Nodos: {len(G.nodes())}")
+    print(f"- Enlaces: {len(G.edges())}")
+    print(f"- Grado promedio: {2*len(G.edges())/len(G.nodes()):.2f}")
 
-    # Estadísticas de la red
-    print(f"Red generada: {len(G_visual.nodes())} nodos, {len(G_visual.edges())} enlaces")
-    print(f"Densidad de enlaces: {len(G_visual.edges())}/{N*(N-1)/2:.1%}")
-
-    cp.random.seed(42)
-    omegas_gpu = cp.random.normal(OMEGA_MU, OMEGA_SIGMA, N, dtype=cp.float32)
-    thetas_0_gpu = cp.random.uniform(0, 2 * np.pi, N, dtype=cp.float32)
-
-    # --- PASO 1: Barrido Exploratorio Optimizado ---
+    # --- PASO 1: Barrido Optimizado usando utils.py ---
     start_time = time.time()
-    r_values, final_thetas_list, effective_freqs_list = run_optimized_sweep_and_get_dynamics(
-        G_visual, thetas_0_gpu, omegas_gpu)
+    
+    r_values, kc_calculated, effective_freqs_dict = run_optimized_sweep_and_get_dynamics(
+        G, thetas, omegas)
+    
     end_time = time.time()
-    print(f"Barrido optimizado completado en {end_time - start_time:.2f} segundos.")
+    print(f"\nAnálisis completado en {end_time - start_time:.2f} segundos.")
 
-    # --- PASO 2: Cálculo de Kc y Análisis Dirigido ---
-    Kc_calculated = find_kc_from_sweep(K_VALUES_SWEEP, r_values)
-
-    if Kc_calculated is not None:
-        print(f"\nUmbral Crítico (Kc) calculado: {Kc_calculated:.4f}")
+    # --- PASO 2: Visualización de Resultados ---
+    if kc_calculated is not None:
+        print(f"\nUmbral Crítico (Kc) calculado: {kc_calculated:.4f}")
 
         # Mostrar curva de sincronización
-        plot_optimization_comparison()
+        plot_optimization_comparison(r_values, kc_calculated)
 
-        analysis_targets = {
-            "Estado Desincronizado": Kc_calculated * 0.5,
-            "Estado de Sincronización Parcial": Kc_calculated,
-            "Estado de Sincronización Global": Kc_calculated * 3.0
+        # --- PASO 3: Análisis Visual de Estados Clave ---
+        state_titles = {
+            "desync": "Estado Desincronizado",
+            "partial": "Estado de Sincronización Parcial", 
+            "sync": "Estado de Sincronización Global"
         }
 
-        for title, target_k in analysis_targets.items():
-            print(f"\n======================================================")
-            print(f"ANÁLISIS VISUAL OPTIMIZADO: {title.upper()}")
-            print(f"======================================================")
+        for state_key, title in state_titles.items():
+            if state_key in effective_freqs_dict:
+                print(f"\n{'='*60}")
+                print(f"ANÁLISIS VISUAL OPTIMIZADO: {title.upper()}")
+                print(f"{'='*60}")
 
-            closest_k_idx = np.argmin(np.abs(K_VALUES_SWEEP - target_k))
-            K_to_analyze = K_VALUES_SWEEP[closest_k_idx]
-            r_global = r_values[closest_k_idx]
-            effective_freqs_to_analyze = effective_freqs_list[closest_k_idx]
+                state_data = effective_freqs_dict[state_key]
+                K_val = state_data['K']
+                r_global = state_data['r']
+                effective_freqs_gpu = state_data['effective_freqs']
 
-            visualize_optimized_final_state(G_visual, effective_freqs_to_analyze,
-                                          title, K_to_analyze, r_global)
+                print(f"K = {K_val:.3f}, r = {r_global:.3f}")
+                
+                visualize_optimized_final_state(G, effective_freqs_gpu,
+                                              title, K_val, r_global)
+            else:
+                print(f"\nNo se encontraron datos para: {title}")
     else:
         print("No se pudo determinar un Kc con el threshold actual.")
-        plot_optimization_comparison()
+        plot_optimization_comparison(r_values, None)
