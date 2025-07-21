@@ -12,3 +12,5 @@ venv
 *.fdb_latexmk
 *.synctex.gz
 
+
+/todos/worktrees/

@@ -21,6 +21,26 @@ R_THRESHOLD = 0.4    # Umbral para definir la sincronización (ajustado para sca
 # Debug: Para redes scale-free, el threshold puede ser más bajo debido a heterogeneidad
 # Threshold más bajo permite detectar Kc cuando r≈0.4 en lugar de r≈0.5
 
+def kuramoto_odes_complete_graph(thetas, K, omegas):
+    """
+    Versión optimizada para grafos completos usando las identidades trigonométricas:
+    sum_j sin(θj-θi) = cos(θi)*sum_j sin(θj) - sin(θi)*sum_j cos(θj)
+    Evita crear la matriz densa NxN completa pero mantiene equivalencia exacta.
+    """
+    N = len(thetas)
+    
+    # Calcular las sumas trigonométricas una sola vez
+    sum_sin = cp.sum(cp.sin(thetas))
+    sum_cos = cp.sum(cp.cos(thetas))
+    
+    # Aplicar la identidad trigonométrica para cada nodo
+    interactions = cp.cos(thetas) * sum_sin - cp.sin(thetas) * sum_cos
+    
+    # Para grafo completo, cada nodo tiene grado N-1
+    dthetas_dt = omegas + (K / (N - 1)) * interactions
+    
+    return dthetas_dt
+
 def kuramoto_odes(thetas, K, A_sparse, omegas, degrees):
     """
     Calcula la derivada de las fases en la GPU usando operaciones sparse.
@@ -43,6 +63,34 @@ def kuramoto_odes(thetas, K, A_sparse, omegas, degrees):
     dthetas_dt = omegas + (K / safe_degrees) * interactions
 
     return dthetas_dt
+
+def rk4_step_complete_graph(thetas, dt, K, omegas):
+    """
+    Versión optimizada de RK4 para grafos completos usando fórmula analítica.
+    """
+    dt_half = 0.5 * dt
+    dt_six  = dt / 6.0
+
+    # k1: Derivada al inicio del intervalo
+    k1 = kuramoto_odes_complete_graph(thetas, K, omegas)
+
+    # k2: Derivada en el punto medio, usando k1
+    k2 = kuramoto_odes_complete_graph(thetas + dt_half * k1, K, omegas)
+
+    # k3: Derivada en el punto medio, usando k2
+    k3 = kuramoto_odes_complete_graph(thetas + dt_half * k2, K, omegas)
+
+    # k4: Derivada al final del intervalo, usando k3
+    k4 = kuramoto_odes_complete_graph(thetas + k3 * dt, K, omegas)
+
+    # Actualización final con el promedio ponderado de las derivadas
+    thetas += dt_six * (k1 + 2*k2 + 2*k3 + k4)
+
+    # Normalizar fases al rango [0, 2π] para evitar problemas numéricos
+    two_pi = thetas.dtype.type(2.0) * cp.pi
+    thetas %= two_pi
+
+    return thetas
 
 def rk4_step(thetas, dt, K, A_sparse, omegas, degrees):
     """
@@ -72,6 +120,35 @@ def rk4_step(thetas, dt, K, A_sparse, omegas, degrees):
     thetas %= two_pi
 
     return thetas
+
+def run_simulation_complete_graph(K, thetas_0, omegas):
+    """
+    Versión optimizada de simulación para grafos completos.
+    No requiere matriz de adyacencia ni array de grados.
+    """
+    num_steps_transient = int(T_TRANSIENT / DT)
+    num_steps_measure = int(T_MEASURE / DT)
+    thetas_current = thetas_0.copy()
+
+    # Fase transitoria
+    for _ in range(num_steps_transient):
+        thetas_current = rk4_step_complete_graph(thetas_current, DT, K, omegas)
+
+    # Fase de medición
+    r_values = []
+    for i in range(num_steps_measure):
+        thetas_current = rk4_step_complete_graph(thetas_current, DT, K, omegas)
+
+        # Calcular r cada 10 pasos para promediar
+        if i % 10 == 0:
+            exp_thetas = cp.exp(1j * thetas_current)
+            r = cp.abs(cp.mean(exp_thetas))
+            r_values.append(r)
+
+    # Promedio de r en el estado estacionario
+    r_final = cp.mean(cp.array(r_values))
+
+    return r_final, thetas_current, r_values
 
 def run_simulation(K, A_sparse, thetas_0, omegas, degrees):
     """
