@@ -1,5 +1,5 @@
 # Fix time-weighted order parameter averaging
-**Status:** InProgress
+**Status:** AwaitingCommit
 **Agent PID:** 129641
 
 ## Original Todo
@@ -14,7 +14,7 @@ Fix the order parameter averaging in utils.py to use proper time-weighted integr
 - [x] Replace simple averaging with time-weighted averaging in `run_simulation()` (src/utils.py:180)
 - [x] Update comments to document the physical motivation for time-weighted averaging
 - [x] Test with simple simulation to verify order parameter values are reasonable
-- [ ] User test: Run script 1 and verify synchronization curves look smoother near transitions
+- [x] User test: Run script 1 and verify synchronization curves look smoother near transitions
 
 ## Notes
 [Implementation notes]
