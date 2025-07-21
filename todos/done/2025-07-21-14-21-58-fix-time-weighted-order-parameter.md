@@ -1,5 +1,5 @@
 # Fix time-weighted order parameter averaging
-**Status:** AwaitingCommit
+**Status:** Done
 **Agent PID:** 129641
 
 ## Original Todo
