@@ -12,55 +12,74 @@
 # 4. Se calculan y visualizan las estadísticas de los Kc obtenidos.
 # ==============================================================================
 
-import cupy as cp
 import numpy as np
-import networkx as nx
 import matplotlib.pyplot as plt
 import time
 from tqdm import tqdm
-from utils import *
+import multiprocessing as mp
+from functools import partial
+from utils import N, generate_random_network, sweep_analysis, find_kc
 
-R_THRESHOLD = 0.5
 NUM_RUNS = 1000
 
 def find_kc_for_single_run(G, omegas_0, thetas_0):
     """
     Realiza un barrido de K para una única red y devuelve su Kc.
     """
-    A_gpu = cp.asarray(nx.to_numpy_array(G), dtype=cp.float32)
-    degrees_gpu = cp.sum(A_gpu, axis=1); degrees_gpu[degrees_gpu == 0] = 1
+    r_values = sweep_analysis(G, omegas_0, thetas_0)
+    # Convert list to numpy array for find_kc
+    kc = find_kc(np.array(r_values))
+    return kc
 
-    r_values = []
-    for K in K_VALUES_SWEEP:
-        r, _ = run_simulation(K, A_gpu, thetas_0, omegas_0, degrees_gpu)
-        r_values.append(r.get())
+def worker_process_run(run_id, seed):
+    """
+    Worker function for parallel processing of a single run.
+    Each process gets its own random seed to ensure different networks.
 
-    # Encuentra el primer K que cruza el umbral
-    indices = np.where(np.array(r_values) > R_THRESHOLD)[0]
-    return K_VALUES_SWEEP[indices[0]] if len(indices) > 0 else None
+    Note: Each process will use GPU memory independently. If running out of
+    GPU memory, reduce the number of processes or consider using
+    cp.cuda.MemoryPool() for better memory management.
+    """
+    # Generate a new network and initial conditions
+    G, omegas_0, thetas_0 = generate_random_network(seed=seed + run_id)
+
+    # Calculate Kc for this instance
+    kc = find_kc_for_single_run(G, omegas_0, thetas_0)
+
+    return kc
 
 # --- 3. SCRIPT PRINCIPAL DE EJECUCIÓN ---
 if __name__ == "__main__":
     print(f"Iniciando análisis estadístico con {NUM_RUNS} corridas para N={N}...")
-    kc_results = []
+
+    # Determine optimal number of processes
+    num_processes = min(mp.cpu_count() - 1, 8)  # Leave one CPU free, max 8 processes
+    print(f"Usando {num_processes} procesos paralelos...")
+    print(f"Esperando reducción de tiempo de ~{NUM_RUNS}x a ~{NUM_RUNS//num_processes}x")
+
     start_time = time.time()
 
-    # Bucle principal para el análisis estadístico
-    for i in tqdm(range(NUM_RUNS), desc="Progreso del Análisis Estadístico"):
-        # Generar una NUEVA red y NUEVOS datos iniciales en cada iteración
-        G = nx.barabasi_albert_graph(N_STATS, M_SCALE_FREE)
+    # Use a fixed seed for reproducibility (optional)
+    base_seed = int(time.time())
 
-        # No fijamos la semilla aquí para asegurar que cada corrida sea única
-        omegas_gpu = cp.random.normal(OMEGA_MU, OMEGA_SIGMA, N_STATS, dtype=cp.float32)
-        thetas_0_gpu = cp.random.uniform(0, 2 * np.pi, N_STATS, dtype=cp.float32)
+    # Create partial function with fixed seed
+    worker_with_seed = partial(worker_process_run, seed=base_seed)
 
-        # Calcular Kc para esta instancia específica
-        kc = find_kc_for_single_run(G, omegas_gpu, thetas_0_gpu)
+    # Run parallel processing with progress bar
+    with mp.Pool(processes=num_processes) as pool:
+        # Use imap_unordered for better performance and progress tracking
+        kc_results_raw = list(tqdm(
+            pool.imap_unordered(worker_with_seed, range(NUM_RUNS)),
+            total=NUM_RUNS,
+            desc="Progreso del Análisis Estadístico"
+        ))
 
-        if kc is not None:
-            kc_results.append(kc)
-        else:
-            print(f"Advertencia: La corrida {i+1} no alcanzó la sincronización en el rango de K probado.")
+    # Filter out None results
+    kc_results = [kc for kc in kc_results_raw if kc is not None]
+    failed_runs = len(kc_results_raw) - len(kc_results)
+
+    if failed_runs > 0:
+        print(f"Advertencia: {failed_runs} corridas no alcanzaron la sincronización en el rango de K probado.")
 
     end_time = time.time()
     print(f"\nAnálisis estadístico completado en {end_time - start_time:.2f} segundos.")
@@ -84,7 +103,7 @@ if __name__ == "__main__":
         plt.axvline(mean_kc, color='red', linestyle='--', linewidth=2, label=f'Media = {mean_kc:.2f}')
         plt.xlabel('Umbral Crítico (Kc)')
         plt.ylabel('Densidad de Probabilidad')
-        plt.title(f'Distribución de Kc para Redes Libres de Escala (N={N_STATS})')
+        plt.title(f'Distribución de Kc para Redes Libres de Escala (N={N})')
         plt.legend()
         plt.grid(True, linestyle=':')
         plt.show()

@@ -10,7 +10,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
-from utils import *
+from utils import N, K_VALUES_SWEEP, run_simulation, generate_random_network
 
 def run_sweep_analysis(network_type, G, thetas, omegas):
     """

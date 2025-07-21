@@ -6,13 +6,14 @@ Computational physics research project analyzing synchronization phenomena in co
 - GPU-accelerated simulations of coupled oscillators (N=10,000 nodes)
 - Compares synchronization in complete graphs vs scale-free networks 
 - Analyzes phase transitions from disorder to synchronization
-- Statistical analysis of critical coupling thresholds
+- Statistical analysis of critical coupling thresholds with multiprocessing parallelization
 - Automated pipeline for comprehensive network analysis
 
 ## Tech Stack
 - Python 3.12 with CuPy for GPU computing
 - NetworkX for graph operations
 - NumPy, Matplotlib, scikit-learn
+- Multiprocessing for CPU parallelization
 - LaTeX for academic documentation
 
 ## Structure

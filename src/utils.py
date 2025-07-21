@@ -4,11 +4,9 @@ import networkx as nx
 from tqdm import tqdm
 from cupyx.scipy import sparse
 
-SEED = 42
-
 # Parámetros de la Red
 N = 10000
-M_SCALE_FREE = 3
+M_SCALE_FREE = 5
 
 # Parámetros de la Dinámica
 OMEGA_MU = 0.0
@@ -106,12 +104,13 @@ def run_simulation(K, A_sparse, thetas_0, omegas, degrees):
 
     return r_final, thetas_current, r_values
 
-def generate_random_network(seed = True):
+def generate_random_network(seed = None):
     print(f"Generando Red Libre de Escala (N={N}, m={M_SCALE_FREE})...")
 
-    if seed:
-        cp.random.seed(SEED)
-        G = nx.barabasi_albert_graph(N, M_SCALE_FREE, seed=SEED)
+    if seed is not None:
+        np.random.seed(seed)
+        cp.random.seed(seed)
+        G = nx.barabasi_albert_graph(N, M_SCALE_FREE, seed=seed)
     else:
         G = nx.barabasi_albert_graph(N, M_SCALE_FREE)
 
@@ -236,7 +235,7 @@ def run_full_analysis(G, thetas, omegas):
             (1.0 * kc_value, "partial"),  # Estado en Kc (r ≈ 0.5)
             (1.8 * kc_value, "sync")     # Estado sincronizado (r ≈ 0.8-0.9)
         ]
-        
+
         print(f"    Ratios mejorados: 0.5*Kc={0.5*kc_value:.3f}, 1.0*Kc={kc_value:.3f}, 1.8*Kc={1.8*kc_value:.3f}")
 
         for K, state_name in additional_K_values:
