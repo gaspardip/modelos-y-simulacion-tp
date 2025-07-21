@@ -85,17 +85,17 @@ Cada simulación se dividió en una fase \textbf{transitoria} (cuyos datos se de
     \centering
     \includegraphics[width=0.9\textwidth]{img/1.png}
     \caption{La transición a la sincronización revela una dicotomía fundamental entre topologías. Mientras el grafo completo (azul) exhibe una transición abrupta de primer orden, la red libre de escala (rojo) muestra una transición suave y gradual, \textbf{lo que constituye la primera evidencia macroscópica de un mecanismo de sincronización subyacente diferente.}}
-    \label{fig:r\_vs\_k}
+    \label{fig:r_vs_k}
 \end{figure}
 
-La Figura \ref{fig:r\_vs\_k} muestra el resultado macroscópico principal. El comportamiento es marcadamente diferente: el grafo completo presenta una transición de tipo "todo o nada", mientras que la red libre de escala se sincroniza de forma progresiva. Esto refuta la hipótesis inicial de que los hubs simplemente facilitarían la transición.
+La Figura \ref{fig:r_vs_k} muestra el resultado macroscópico principal. El comportamiento es marcadamente diferente: el grafo completo presenta una transición de tipo "todo o nada", mientras que la red libre de escala se sincroniza de forma progresiva. Esto refuta la hipótesis inicial de que los hubs simplemente facilitarían la transición.
 
 \subsection{Mecanismo de Sincronización Jerárquico}
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{img/2\_1.png}
-    \includegraphics[width=\textwidth]{img/2\_2.png}
-    \includegraphics[width=\textwidth]{img/2\_3.png}
+    \includegraphics[width=\textwidth]{img/2_1.png}
+    \includegraphics[width=\textwidth]{img/2_2.png}
+    \includegraphics[width=\textwidth]{img/2_3.png}
     \caption{El mecanismo de sincronización jerárquico se revela al observar la red en tres regímenes. \textbf{Arriba:} En estado desordenado (K < Kc), las fases (color) están distribuidas aleatoriamente. \textbf{Centro:} En el umbral crítico (K \approx Kc), emerge un núcleo de hubs sincronizados (pálidos) que coexiste con "drifters" periféricos (coloreados). \textbf{Esta coexistencia es la causa de la transición gradual observada en la Fig. 1.} \textbf{Abajo:} En acoplamiento fuerte (K > Kc), el núcleo sincronizado ha crecido hasta abarcar casi toda la red.}
     \label{fig:mecanismo}
 \end{figure}
@@ -103,22 +103,23 @@ La Figura \ref{fig:r\_vs\_k} muestra el resultado macroscópico principal. El co
 Para entender la causa de la transición gradual, la Figura \ref{fig:mecanismo} visualiza la dinámica interna de la red. El panel central (\(K \approx K_c\)) es el más revelador: muestra la formación de un \textbf{núcleo sincronizado} compuesto por los hubs, que impone un ritmo común mientras coexiste con nodos periféricos no sincronizados. Esto confirma que la sincronización es un proceso jerárquico que comienza en los hubs.
 
 \subsection{Análisis Estadístico del Umbral Crítico}
+Finalmente, para asegurar la generalidad de los hallazgos, se calculó \(K_c\) para 1000 redes independientes. De estas, 457 alcanzaron el umbral de sincronización dentro del rango de K explorado. El análisis de estas corridas exitosas arrojó un valor promedio de \(K_c = 4.3834\) con una desviación estándar de \(0.0557\). La Figura \ref{fig:kc_hist} muestra la distribución de estos valores, la cual es estrecha y unimodal, confirmando que los resultados son una propiedad robusta de esta clase de redes.
+
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{img/placeholder.png} 
-    \caption{La robustez del umbral crítico se confirma mediante el análisis de 1000 realizaciones. La distribución estrecha y unimodal (media=2.93, \(\sigma\)=0.15) demuestra que el mecanismo de sincronización jerárquico \textbf{no es un artefacto de una red particular, sino una propiedad fundamental y predecible de las redes heterogéneas.}}
-    \label{fig:kc\_hist}
+    \caption{La robustez del umbral crítico se confirma mediante el análisis de 1000 realizaciones. La distribución estrecha y unimodal (media = 4.38, \(\sigma\) = 0.06) demuestra que el mecanismo de sincronización jerárquico \textbf{no es un artefacto de una red particular, sino una propiedad fundamental y predecible de las redes heterogéneas.}}
+    \label{fig:kc_hist}
 \end{figure}
 
-Finalmente, para asegurar la generalidad de los hallazgos, se calculó \(K_c\) para 1000 redes independientes. La Figura \ref{fig:kc\_hist} muestra que la distribución de \(K_c\) es estrecha, confirmando que los resultados son una propiedad robusta de esta clase de redes.
 
 \section{Discusión}
 
-Los resultados presentados convergen en un hallazgo central: la heterogeneidad estructural de las redes libres de escala induce un mecanismo de sincronización jerárquico, fundamentalmente distinto de la transición abrupta y colectiva observada en sistemas homogéneos. Este mecanismo explica la aparente contradicción de la Figura \ref{fig:r\_vs\_k}, donde la red libre de escala, a pesar de tener hubs, requiere un acoplamiento global (K) más fuerte para una sincronización completa. La transición suave es la firma macroscópica de la formación progresiva del núcleo de hubs que se visualiza en la Figura \ref{fig:mecanismo}.
+Los resultados presentados convergen en un hallazgo central: la heterogeneidad estructural de las redes libres de escala induce un mecanismo de sincronización jerárquico, fundamentalmente distinto de la transición abrupta y colectiva observada en sistemas homogéneos. Este mecanismo explica la aparente contradicción de la Figura \ref{fig:r_vs_k}, donde la red libre de escala, a pesar de tener hubs, requiere un acoplamiento global (K) más fuerte para una sincronización completa. La transición suave es la firma macroscópica de la formación progresiva del núcleo de hubs que se visualiza en la Figura \ref{fig:mecanismo}.
 
 El descubrimiento más profundo de esta investigación surgió de una hipótesis fallida. Inicialmente, se asumió que el "núcleo estructural" (los hubs de mayor grado) sería idéntico al "núcleo dinámico" (los nodos más perfectamente sincronizados). Sin embargo, la inspección visual de la frecuencia efectiva (color en Fig. 2) refutó esta idea. Los hubs, aunque son los \textbf{catalizadores} del orden, a menudo retienen una frecuencia residual debido a sus propias dinámicas intrínsecas (su "terquedad"). Los miembros más perfectamente sincronizados son, de hecho, los \textbf{"seguidores dóciles"}: nodos con frecuencias naturales cercanas a la media del sistema que se unen al cluster sin esfuerzo.
 
-Finalmente, el análisis estadístico de la Figura \ref{fig:kc\_hist} consolida este argumento. La baja variabilidad de \(K_c\) demuestra que estos hallazgos no son una anécdota de una realización de red, sino una propiedad robusta y característica de esta clase de sistemas complejos.
+Finalmente, el análisis estadístico de la Figura \ref{fig:kc_hist} consolida este argumento. La baja variabilidad de \(K_c\) demuestra que estos hallazgos no son una anécdota de una realización de red, sino una propiedad robusta y característica de esta clase de sistemas complejos.
 
 \section{Conclusión}
 
