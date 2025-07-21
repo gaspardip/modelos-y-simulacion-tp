@@ -1,15 +1,14 @@
 # ==============================================================================
-# SCRIPT FINAL (DE PUBLICACIÓN): PIPELINE COMPLETO DE ANÁLISIS
+# SCRIPT OPTIMIZADO: PIPELINE COMPLETO DE ANÁLISIS CON OPTIMIZACIONES
 # ==============================================================================
-# Propósito: Realizar un análisis completo y automático de la sincronización,
-# desde el barrido cuantitativo hasta la visualización cualitativa final.
+# Propósito: Analizar frecuencias efectivas y visualización filtrada de hubs.
+# Refactorizado para usar las utilidades optimizadas de utils.py.
 #
-# Metodología:
-# 1. Barrido de K para obtener la curva r vs. K y los estados dinámicos.
-# 2. Cálculo automático de Kc a partir de los datos del barrido.
-# 3. Visualización final en tres regímenes clave (relativos a Kc) donde:
-#    - El TAMAÑO del nodo es una función no lineal de su GRADO para resaltar los hubs.
-#    - El COLOR del nodo representa su FRECUENCIA EFECTIVA.
+# Optimizaciones implementadas:
+# 1. Uso de utils.py para simulaciones optimizadas
+# 2. Cálculo eficiente de frecuencias efectivas
+# 3. Visualización filtrada (solo hubs principales)
+# 4. Integración con funciones estándar del proyecto
 # ==============================================================================
 
 import cupy as cp
@@ -17,124 +16,264 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
-from tqdm import tqdm
+from utils import (
+    generate_random_network, run_full_analysis, find_kc,
+    K_VALUES_SWEEP, run_simulation
+)
 
-# --- 1. PARÁMETROS GLOBALES ---
-N = 10000
-M_SCALE_FREE = 3
-OMEGA_MU = 0.0
-OMEGA_SIGMA = 0.5
-T_SIMULATION = 20.0
-DT = 0.01
-K_VALUES_SWEEP = np.linspace(0, 5, 50)
+# Parámetros de visualización optimizada
+TOP_HUBS_PERCENT = 0.05  # Solo mostrar top 0.3% de hubs (~30 nodos)
+MIN_NODES_TO_SHOW = 20  # Mínimo de nodos a mostrar
+MAX_NODES_TO_SHOW = 100  # Máximo de nodos para claridad
 
-# --- 2. FUNCIONES DE SIMULACIÓN Y ANÁLISIS ---
+def run_optimized_sweep_and_get_dynamics(G, thetas_0, omegas):
+    """
+    Versión optimizada del barrido usando utils.py para obtener dinámicas.
+    Calcula frecuencias efectivas para análisis adicional.
+    """
+    print("Iniciando barrido optimizado usando utils.py...")
 
-def kuramoto_odes_gpu(thetas, K, A, omegas, degrees):
-    phase_diffs = thetas - thetas[:, cp.newaxis]
-    interactions = A * cp.sin(phase_diffs)
-    interaction_sum = cp.sum(interactions, axis=1)
-    return omegas + (K / degrees) * interaction_sum
+    # Usar run_full_analysis de utils.py para obtener estados clave
+    results = run_full_analysis(G, thetas_0, omegas)
+    r_values = results['r_values']
+    kc_value = results['kc_value']
+    A_sparse = results['A_sparse']
+    degrees = results['degrees']
 
-def run_full_sweep_and_get_dynamics(G, thetas_0, omegas):
-    print("Iniciando barrido exploratorio para encontrar Kc y guardar estados...")
-    r_results, final_thetas_list, effective_freqs_list = [], [], []
-    A_gpu = cp.asarray(nx.to_numpy_array(G), dtype=cp.float32)
-    degrees_gpu = cp.sum(A_gpu, axis=1); degrees_gpu[degrees_gpu == 0] = 1
+    # Calcular frecuencias efectivas para puntos clave
+    effective_freqs_dict = {}
 
-    for K in tqdm(K_VALUES_SWEEP, desc="Barrido de K"):
-        num_steps = int(T_SIMULATION / DT)
-        thetas_current = thetas_0.copy()
-        thetas_midpoint = None
+    if kc_value is not None:
+        # Calcular frecuencias efectivas para los estados clave
+        key_K_values = [
+            (0.5 * kc_value, "desync"),
+            (1.0 * kc_value, "partial"),
+            (1.8 * kc_value, "sync")
+        ]
 
-        for step in range(num_steps):
-            if step == num_steps // 2:
-                thetas_midpoint = thetas_current.copy()
-            dthetas = kuramoto_odes_gpu(thetas_current, K, A_gpu, omegas, degrees_gpu)
-            thetas_current += dthetas * DT
+        for K, state_name in key_K_values:
+            print(f"  Calculando frecuencias efectivas para estado {state_name} (K={K:.3f})...")
 
-        effective_freqs = (thetas_current - thetas_midpoint) / (T_SIMULATION / 2)
-        effective_freqs_list.append(effective_freqs)
+            # Simular y calcular frecuencias efectivas
+            thetas_start = thetas_0.copy()
+            r, thetas_final, _ = run_simulation(K, A_sparse, thetas_start, omegas, degrees)
 
-        final_thetas_list.append(cp.mod(thetas_current, 2 * np.pi))
-        r_results.append(cp.abs(cp.mean(cp.exp(1j * final_thetas_list[-1]))).get())
+            # Calcular frecuencias efectivas como diferencia de fases normalizada
+            from utils import T_MEASURE
+            effective_freqs = (thetas_final - thetas_start) / T_MEASURE
+            effective_freqs_dict[state_name] = {
+                'K': K,
+                'r': r.get(),
+                'thetas': thetas_final,
+                'effective_freqs': effective_freqs
+            }
 
-    return np.array(r_results), final_thetas_list, effective_freqs_list
+    return r_values, kc_value, effective_freqs_dict
 
-def find_kc_from_sweep(k_values, r_values, threshold=0.5):
-    indices = np.where(r_values > threshold)[0]
-    return k_values[indices[0]] if len(indices) > 0 else None
+def get_filtered_nodes_for_visualization(G, top_percent=0.1, min_nodes=50, max_nodes=MAX_NODES_TO_SHOW):
+    """Filtra nodos para visualización con clasificación jerárquica de hubs"""
+    degrees = dict(G.degree())
+    all_degrees = list(degrees.values())
 
-def visualize_final_state(G, effective_freqs_gpu, title, K, r_global):
-    print(f"  Generando visualización final para '{title}'...")
+    # Clasificación jerárquica de hubs
+    super_hub_threshold = np.percentile(all_degrees, 99)  # Top 1%
+    major_hub_threshold = np.percentile(all_degrees, 95)  # Top 5%
+    minor_hub_threshold = np.percentile(all_degrees, 85)  # Top 15%
 
-    # --- Propiedades Visuales Mejoradas ---
-    degrees = np.array([d for n, d in G.degree()])
-    # Mapeo no lineal para exagerar el tamaño de los hubs
-    node_sizes = degrees**1.5 + 10
+    # Identificar diferentes tipos de hubs
+    super_hubs = [n for n, d in degrees.items() if d >= super_hub_threshold]
+    major_hubs = [n for n, d in degrees.items() if major_hub_threshold <= d < super_hub_threshold]
+    minor_hubs = [n for n, d in degrees.items() if minor_hub_threshold <= d < major_hub_threshold]
 
+    # Combinar todos los hubs según el porcentaje solicitado
+    sorted_nodes = sorted(degrees.items(), key=lambda x: x[1], reverse=True)
+    num_to_show = max(int(len(sorted_nodes) * top_percent), min_nodes)
+    # Limitar al máximo permitido para claridad
+    num_to_show = min(num_to_show, max_nodes)
+    top_nodes = [node for node, degree in sorted_nodes[:num_to_show]]
+
+    # Crear subgrafo con los nodos seleccionados
+    G_sub = G.subgraph(top_nodes).copy()
+
+    # No añadir bordes virtuales para reducir el desorden visual
+    # Solo mostrar conexiones reales entre los hubs seleccionados
+
+    # Almacenar información de clasificación en el grafo
+    for node in G_sub.nodes():
+        if node in super_hubs:
+            G_sub.nodes[node]['hub_type'] = 'super'
+        elif node in major_hubs:
+            G_sub.nodes[node]['hub_type'] = 'major'
+        elif node in minor_hubs:
+            G_sub.nodes[node]['hub_type'] = 'minor'
+        else:
+            G_sub.nodes[node]['hub_type'] = 'regular'
+
+    print(f"    Hubs clasificados: {len(super_hubs)} super-hubs, {len(major_hubs)} major-hubs, {len(minor_hubs)} minor-hubs")
+
+    return G_sub
+
+def visualize_optimized_final_state(G, effective_freqs_gpu, title, K, r_global):
+    """Visualización optimizada con filtrado de nodos"""
+    print(f"  Generando visualización optimizada para '{title}'...")
+
+    # Filtrar grafo para mostrar solo hubs principales
+    G_filtered = get_filtered_nodes_for_visualization(G, TOP_HUBS_PERCENT, MIN_NODES_TO_SHOW, MAX_NODES_TO_SHOW)
+    print(f"    Visualizando {len(G_filtered.nodes())} nodos principales de {len(G.nodes())} totales")
+
+    # Mapear frecuencias efectivas a nodos filtrados
     effective_freqs_cpu = cp.asnumpy(effective_freqs_gpu)
-    node_colors = effective_freqs_cpu
-    v_max = np.percentile(np.abs(node_colors), 99)
+    node_to_freq = {i: effective_freqs_cpu[i] for i in range(len(effective_freqs_cpu))}
+    filtered_freqs = [node_to_freq[node] for node in G_filtered.nodes()]
 
-    # --- Generar el Gráfico ---
-    plt.figure(figsize=(18, 18))
-    print("    Calculando layout del grafo...")
-    pos = nx.spring_layout(G, seed=42, iterations=50, k=0.8)
+    # Propiedades visuales optimizadas
+    degrees = np.array([d for n, d in G_filtered.degree()])
+    # Escalar tamaños para 30 nodos - más grandes y diferenciados
+    node_sizes = (degrees**1.5) * 3 + 100  # Tamaño mayor para mejor visibilidad
 
-    print("    Dibujando la red...")
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes,
-                                   cmap=plt.cm.coolwarm, vmin=-v_max, vmax=v_max, alpha=0.8)
-    nx.draw_networkx_edges(G, pos, width=0.1, alpha=0.5, edge_color='grey')
+    node_colors = filtered_freqs
+    v_max = np.percentile(np.abs(node_colors), 95)
+
+    # Layout optimizado para menos nodos
+    plt.figure(figsize=(14, 14))
+    print("    Calculando layout optimizado (Kamada-Kawai)...")
+    # Kamada-Kawai produce mejores resultados para redes con hubs
+    pos = nx.kamada_kawai_layout(G_filtered)
+
+    print("    Dibujando red filtrada con estilos graduados...")
+    nx.draw_networkx_nodes(G_filtered, pos, node_color=node_colors, node_size=node_sizes,
+                          cmap=plt.cm.coolwarm, vmin=-v_max, vmax=v_max, alpha=0.8)
+
+    # Dibujar todos los bordes con un estilo simple y uniforme
+    # Solo variar el grosor según la importancia de los nodos conectados
+    edge_widths = []
+    for (u, v) in G_filtered.edges():
+        u_degree = G_filtered.degree(u)
+        v_degree = G_filtered.degree(v)
+        # Grosor proporcional al grado mínimo de los nodos conectados
+        min_degree = min(u_degree, v_degree)
+        width = 0.5 + (min_degree / 10.0)  # Escalar grosor
+        edge_widths.append(width)
+
+    # Dibujar todos los bordes en gris con transparencia
+    nx.draw_networkx_edges(G_filtered, pos, width=edge_widths,
+                          alpha=0.3, edge_color='grey')
+
+    # Agregar etiquetas solo para los top 5 super-hubs
+    label_nodes = {}
+    degrees_dict = dict(G_filtered.degree())
+
+    # Solo etiquetar los top 5 nodos por grado
+    top_5_nodes = sorted(G_filtered.nodes(),
+                        key=lambda x: degrees_dict[x], reverse=True)[:5]
+
+    for node in top_5_nodes:
+        # Mostrar solo el ID del nodo
+        label_nodes[node] = str(node)
+
+    nx.draw_networkx_labels(G_filtered, pos, label_nodes, font_size=8, font_color='black',
+                           font_weight='bold', bbox=dict(boxstyle="round,pad=0.3",
+                                                        facecolor="white", alpha=0.7))
 
     sm = plt.cm.ScalarMappable(cmap=plt.cm.coolwarm, norm=plt.Normalize(vmin=-v_max, vmax=v_max))
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=plt.gca(), shrink=0.7)
-    cbar.set_label('Frecuencia Efectiva (rad/s)', rotation=270, labelpad=25, fontsize=16)
+    cbar.set_label('Frecuencia Efectiva (rad/s)', rotation=270, labelpad=25, fontsize=14)
 
-    plt.title(f"{title}\nK={K:.2f}, Orden Global (r) = {r_global:.3f}", fontsize=28)
-    plt.box(False)
-    fig = plt.gca()
-    fig.axes.get_xaxis().set_ticks([])
-    fig.axes.get_yaxis().set_ticks([])
+    plt.title(f"{title}\nK={K:.2f}, Orden Global (r) = {r_global:.3f}\n({len(G_filtered.nodes())} hubs principales de {len(G.nodes())} nodos)",
+              fontsize=20)
+
+    # No incluir leyenda para simplificar la visualización
+
+    plt.axis('off')
+    plt.tight_layout()
     plt.show()
 
-# --- 3. SCRIPT PRINCIPAL DE EJECUCIÓN ---
+def plot_optimization_comparison(r_values, kc_calculated):
+    """Gráfico de curva r vs K con información de optimización"""
+    plt.figure(figsize=(12, 8))
+    plt.plot(K_VALUES_SWEEP, r_values, 'b-', linewidth=2, label='Parámetro de orden r')
+
+    if kc_calculated is not None:
+        plt.axvline(x=kc_calculated, color='red', linestyle='--', linewidth=2,
+                   label=f'Kc crítico = {kc_calculated:.3f}')
+
+        # Marcar los puntos de análisis
+        analysis_points = [
+            (0.5 * kc_calculated, 'Desincronizado'),
+            (1.0 * kc_calculated, 'En Kc'),
+            (1.8 * kc_calculated, 'Sincronizado')
+        ]
+
+        colors = ['green', 'red', 'purple']
+        for i, (K_point, label) in enumerate(analysis_points):
+            plt.axvline(x=K_point, color=colors[i], linestyle=':', alpha=0.7,
+                       label=f'{label} (K={K_point:.2f})')
+
+    from utils import R_THRESHOLD
+    plt.axhline(y=R_THRESHOLD, color='gray', linestyle=':', alpha=0.7,
+               label=f'Threshold = {R_THRESHOLD}')
+
+    plt.xlabel('Acoplamiento K', fontsize=14)
+    plt.ylabel('Parámetro de orden r', fontsize=14)
+    plt.title('Curva de Sincronización Optimizada\n(Usando utils.py + Análisis de Frecuencias)', fontsize=16)
+    plt.grid(True, alpha=0.3)
+    plt.legend(fontsize=12)
+    plt.xlim(0, 5)
+    plt.ylim(0, 1)
+    plt.tight_layout()
+    plt.show()
+
+# --- 3. SCRIPT PRINCIPAL OPTIMIZADO ---
 if __name__ == "__main__":
     # --- PASO 0: Generación de la Red y Datos Iniciales ---
-    print(f"Generando Red Libre de Escala (N={N})...")
-    G_visual = nx.barabasi_albert_graph(N, M_SCALE_FREE, seed=42)
-    cp.random.seed(42)
-    omegas_gpu = cp.random.normal(OMEGA_MU, OMEGA_SIGMA, N, dtype=cp.float32)
-    thetas_0_gpu = cp.random.uniform(0, 2 * np.pi, N, dtype=cp.float32)
+    G, omegas, thetas = generate_random_network(seed=True)
 
-    # --- PASO 1: Barrido Exploratorio ---
+    print(f"\nEstadísticas de la red:")
+    print(f"- Nodos: {len(G.nodes())}")
+    print(f"- Enlaces: {len(G.edges())}")
+    print(f"- Grado promedio: {2*len(G.edges())/len(G.nodes()):.2f}")
+
+    # --- PASO 1: Barrido Optimizado usando utils.py ---
     start_time = time.time()
-    r_values, final_thetas_list, effective_freqs_list = run_full_sweep_and_get_dynamics(G_visual, thetas_0_gpu, omegas_gpu)
+
+    r_values, kc_calculated, effective_freqs_dict = run_optimized_sweep_and_get_dynamics(
+        G, thetas, omegas)
+
     end_time = time.time()
-    print(f"Barrido exploratorio completado en {end_time - start_time:.2f} segundos.")
+    print(f"\nAnálisis completado en {end_time - start_time:.2f} segundos.")
 
-    # --- PASO 2: Cálculo de Kc y Análisis Dirigido ---
-    Kc_calculated = find_kc_from_sweep(K_VALUES_SWEEP, r_values)
+    # --- PASO 2: Visualización de Resultados ---
+    if kc_calculated is not None:
+        print(f"\nUmbral Crítico (Kc) calculado: {kc_calculated:.4f}")
 
-    if Kc_calculated is not None:
-        print(f"\nUmbral Crítico (Kc) calculado para esta red: {Kc_calculated:.4f}")
-        analysis_targets = {
-            "Estado Desincronizado": Kc_calculated * 0.5,
-            "Estado de Sincronización Parcial": Kc_calculated,
-            "Estado de Sincronización Global": Kc_calculated * 3.0
+        # Mostrar curva de sincronización
+        plot_optimization_comparison(r_values, kc_calculated)
+
+        # --- PASO 3: Análisis Visual de Estados Clave ---
+        state_titles = {
+            "desync": "Estado Desincronizado",
+            "partial": "Estado de Sincronización Parcial",
+            "sync": "Estado de Sincronización Global"
         }
 
-        for title, target_k in analysis_targets.items():
-            print(f"\n======================================================")
-            print(f"INICIANDO ANÁLISIS VISUAL PARA: {title.upper()}")
-            print(f"======================================================")
+        for state_key, title in state_titles.items():
+            if state_key in effective_freqs_dict:
+                print(f"\n{'='*60}")
+                print(f"ANÁLISIS VISUAL OPTIMIZADO: {title.upper()}")
+                print(f"{'='*60}")
 
-            closest_k_idx = np.argmin(np.abs(K_VALUES_SWEEP - target_k))
-            K_to_analyze = K_VALUES_SWEEP[closest_k_idx]
-            r_global = r_values[closest_k_idx]
-            effective_freqs_to_analyze = effective_freqs_list[closest_k_idx]
+                state_data = effective_freqs_dict[state_key]
+                K_val = state_data['K']
+                r_global = state_data['r']
+                effective_freqs_gpu = state_data['effective_freqs']
 
-            visualize_final_state(G_visual, effective_freqs_to_analyze, title, K_to_analyze, r_global)
+                print(f"K = {K_val:.3f}, r = {r_global:.3f}")
+
+                visualize_optimized_final_state(G, effective_freqs_gpu,
+                                              title, K_val, r_global)
+            else:
+                print(f"\nNo se encontraron datos para: {title}")
     else:
-        print("No se pudo determinar un Kc.")
+        print("No se pudo determinar un Kc con el threshold actual.")
+        plot_optimization_comparison(r_values, None)
