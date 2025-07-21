@@ -1,4 +1,3 @@
-- SCIENTIFIC BUG: utils.py línea 73 usa cp.remainder que puede causar discontinuidades, debe usar thetas % (2*np.pi) para normalización correcta de fases
 - SCIENTIFIC: El promedio del parámetro de orden en utils.py línea 104 no es ponderado por tiempo, puede dar resultados sesgados en transiciones lentas
 - SCIENTIFIC: Script 3 calcula frecuencias efectivas como (θ_final-θ_inicial)/T pero cerca de transiciones esto puede ser engañoso por deriva de fase
 - SCIENTIFIC: R_THRESHOLD=0.4 es arbitrario, debería calcularse basado en la desviación estándar del ruido o características de la red

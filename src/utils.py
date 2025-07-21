@@ -69,8 +69,9 @@ def rk4_step(thetas, dt, K, A_sparse, omegas, degrees):
     thetas += dt_six * (k1 + 2*k2 + 2*k3 + k4)
 
     # Normalizar fases al rango [0, 2π] para evitar problemas numéricos
+    # Usar modulo (%) en lugar de remainder para evitar discontinuidades
     two_pi = thetas.dtype.type(2.0) * cp.pi
-    cp.remainder(thetas, two_pi, out=thetas)
+    thetas %= two_pi
 
     return thetas
 
