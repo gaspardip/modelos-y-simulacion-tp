@@ -67,17 +67,17 @@ def kuramoto_odes_complete_graph(thetas, K, omegas):
     Evita crear la matriz densa NxN completa pero mantiene equivalencia exacta.
     """
     N = len(thetas)
-    
+
     # Calcular las sumas trigonométricas una sola vez
     sum_sin = cp.sum(cp.sin(thetas))
     sum_cos = cp.sum(cp.cos(thetas))
-    
+
     # Aplicar la identidad trigonométrica para cada nodo
     interactions = cp.cos(thetas) * sum_sin - cp.sin(thetas) * sum_cos
-    
+
     # Para grafo completo, cada nodo tiene grado N-1
     dthetas_dt = omegas + (K / (N - 1)) * interactions
-    
+
     return dthetas_dt
 
 def kuramoto_odes(thetas, K, A_sparse, omegas, degrees):
@@ -240,10 +240,10 @@ def generate_random_network(seed = None):
     else:
         G = nx.barabasi_albert_graph(N, M_SCALE_FREE)
 
-    omegas = cp.random.normal(OMEGA_MU, OMEGA_SIGMA, N, dtype=cp.float32)
-    thetas = cp.random.uniform(0, 2 * np.pi, N, dtype=cp.float32)
+    omegas_0 = cp.random.normal(OMEGA_MU, OMEGA_SIGMA, N, dtype=cp.float32)
+    thetas_0 = cp.random.uniform(0, 2 * np.pi, N, dtype=cp.float32)
 
-    return G, omegas, thetas
+    return G, omegas_0, thetas_0
 
 def sweep_analysis(G, thetas, omegas, store_thetas_at_kc=False, return_sparse=False):
     """

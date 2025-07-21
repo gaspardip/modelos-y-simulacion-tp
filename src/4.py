@@ -88,19 +88,29 @@ if __name__ == "__main__":
     if kc_results:
         mean_kc = np.mean(kc_results)
         std_kc = np.std(kc_results)
+        median_kc = np.median(kc_results)
+        min_kc = np.min(kc_results)
+        max_kc = np.max(kc_results)
 
         print("\n======================================================")
         print("          RESULTADOS ESTADÍSTICOS DE KC")
         print("======================================================")
         print(f"Número de corridas exitosas: {len(kc_results)} de {NUM_RUNS}")
         print(f"Kc Promedio (Esperanza):   {mean_kc:.4f}")
+        print(f"Kc Mediana:                {median_kc:.4f}")
         print(f"Desviación Estándar de Kc: {std_kc:.4f}")
-        print(f"Intervalo de confianza del 95% (aprox.): ({mean_kc - 2*std_kc:.4f}, {mean_kc + 2*std_kc:.4f})")
+        print(f"Rango: [{min_kc:.4f}, {max_kc:.4f}]")
+
+        # Intervalo de confianza simple
+        ci_lower = mean_kc - 2*std_kc
+        ci_upper = mean_kc + 2*std_kc
+        print(f"Intervalo de confianza del 95% (aprox.): ({ci_lower:.4f}, {ci_upper:.4f})")
 
         # Visualizar la distribución de los resultados de Kc
         plt.figure(figsize=(10, 6))
-        plt.hist(kc_results, bins=15, density=True, alpha=0.7, label='Distribución de Kc')
-        plt.axvline(mean_kc, color='red', linestyle='--', linewidth=2, label=f'Media = {mean_kc:.2f}')
+        plt.hist(kc_results, bins=20, density=True, alpha=0.7, label='Distribución de Kc', color='skyblue')
+        plt.axvline(mean_kc, color='red', linestyle='--', linewidth=2, label=f'Media = {mean_kc:.3f}')
+        plt.axvline(median_kc, color='green', linestyle=':', linewidth=2, label=f'Mediana = {median_kc:.3f}')
         plt.xlabel('Umbral Crítico (Kc)')
         plt.ylabel('Densidad de Probabilidad')
         plt.title(f'Distribución de Kc para Redes Libres de Escala (N={N})')

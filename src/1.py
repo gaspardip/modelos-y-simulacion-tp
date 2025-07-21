@@ -25,7 +25,7 @@ def run_sweep_analysis(network_type, G, thetas, omegas):
 
     # Para redes completas, usar la optimización analítica (sin matriz densa)
     if network_type == "Grafo Completo":
-        print("    Usando optimización analítica para grafo completo (sin matriz densa)")
+        print("Usando optimización analítica para grafo completo (sin matriz densa)")
         for i, K in enumerate(K_VALUES_SWEEP):
             print(f"  Calculando... K = {K:.2f} ({i+1}/{len(K_VALUES_SWEEP)})")
             r, *_ = run_simulation_complete_graph(K, thetas, omegas)
@@ -35,7 +35,7 @@ def run_sweep_analysis(network_type, G, thetas, omegas):
         A_scipy = nx.to_scipy_sparse_array(G, format='csr', dtype=np.float32)
         A_gpu = cp.sparse.csr_matrix(A_scipy)
         degrees_gpu = cp.array(A_scipy.sum(axis=1).flatten(), dtype=cp.float32)
-        
+
         for i, K in enumerate(K_VALUES_SWEEP):
             print(f"  Calculando... K = {K:.2f} ({i+1}/{len(K_VALUES_SWEEP)})")
             r, *_ = run_simulation(K, A_gpu, thetas, omegas, degrees_gpu)
