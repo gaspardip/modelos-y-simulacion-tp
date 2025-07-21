@@ -22,7 +22,7 @@
 }
 
 \title{Análisis Computacional de la Sincronización en Redes Complejas: Un Estudio del Modelo de Kuramoto}
-\author{Gaspar}
+\author{Gaspar Dip}
 \date{\today}
 
 \begin{document}
@@ -93,35 +93,32 @@ La Figura \ref{fig:r_vs_k} muestra el resultado macroscópico principal. El comp
 \end{figure}
 
 \subsection{Mecanismo de Sincronización Jerárquico: Vista Global}
-Para entender la causa de la transición gradual, la Figura \ref{fig:mecanismo} visualiza la dinámica interna de la red en los tres regímenes clave. El panel central (Figura \ref{fig:mecanismo}b) es el más revelador: muestra la formación de un \textbf{núcleo sincronizado} compuesto por los hubs, que impone un ritmo común mientras coexiste con nodos periféricos no sincronizados. Esto confirma que la sincronización es un proceso jerárquico que comienza en los hubs.
+Para entender la causa de la transición gradual, las Figuras \ref{fig:mecanismo_a}, \ref{fig:mecanismo_b} y \ref{fig:mecanismo_c} visualizan la dinámica interna de la red en los tres regímenes clave. El panel central (Figura \ref{fig:mecanismo_b}) es el más revelador: muestra la formación de un \textbf{núcleo sincronizado} compuesto por los hubs, que impone un ritmo común mientras coexiste con nodos periféricos no sincronizados. Esto confirma que la sincronización es un proceso jerárquico que comienza en los hubs.
 
-\begin{figure}[htbp]
+\begin{figure}[p]
     \centering
-    \begin{subfigure}[b]{\textwidth}
-        \centering
-        \includegraphics[width=0.8\textwidth]{img/2_2.png}
-        \caption{Estado desordenado ($K < K_c$). Las fases (color) y frecuencias efectivas están distribuidas aleatoriamente.}
-        \label{fig:mecanismo_a}
-    \end{subfigure}
-    \begin{subfigure}[b]{\textwidth}
-        \centering
-        \includegraphics[width=0.8\textwidth]{img/2_4.png}
-        \caption{Estado de sincronización parcial ($K \approx K_c$). Emerge un núcleo de hubs sincronizados (pálidos) que coexiste con "drifters" periféricos (coloreados).}
-        \label{fig:mecanismo_b}
-    \end{subfigure}
-    \begin{subfigure}[b]{\textwidth}
-        \centering
-        \includegraphics[width=0.8\textwidth]{img/2_6.png}
-        \caption{Estado de sincronización fuerte ($K > K_c$). El núcleo sincronizado ha crecido hasta abarcar casi toda la red.}
-        \label{fig:mecanismo_c}
-    \end{subfigure}
-    \caption{Visualización del mecanismo de sincronización en una red libre de escala. La coexistencia de un núcleo sincronizado y drifters en el estado parcial (b) es la causa de la transición gradual observada en la Fig. 1.}
-    \label{fig:mecanismo}
+    \includegraphics[width=\textwidth]{img/2_2.png}
+    \caption{Estado desordenado ($K < K_c$). Las fases (color) y frecuencias efectivas están distribuidas aleatoriamente.}
+    \label{fig:mecanismo_a}
+\end{figure}
+
+\begin{figure}[p]
+    \centering
+    \includegraphics[width=\textwidth]{img/2_4.png}
+    \caption{Estado de sincronización parcial ($K \approx K_c$). Emerge un núcleo de hubs sincronizados (pálidos) que coexiste con "drifters" periféricos (coloreados).}
+    \label{fig:mecanismo_b}
+\end{figure}
+
+\begin{figure}[p]
+    \centering
+    \includegraphics[width=\textwidth]{img/2_6.png}
+    \caption{Estado de sincronización fuerte ($K > K_c$). El núcleo sincronizado ha crecido hasta abarcar casi toda la red.}
+    \label{fig:mecanismo_c}
 \end{figure}
 
 
 \subsection{Análisis Cuantitativo de Comunidades Dinámicas}
-Para cuantificar la emergencia de estructuras coherentes, se aplicó un análisis de clustering (K-Means) a los estados de los hubs (Figura \ref{fig:clustering}). En el estado de sincronización parcial (Figura \ref{fig:clustering}b), las métricas de calidad como el método del codo y el coeficiente de silueta sugieren la formación de un número pequeño de clusters (k=2 o 3), lo que corresponde al núcleo sincronizado principal y uno o más grupos de 'drifters'.
+Para cuantificar la emergencia de estructuras coherentes, se aplicó un análisis de clustering (K-Means) a los estados de los hubs (Figura \ref{fig:clustering}). En el estado de sincronización parcial (Figura \ref{fig:clustering}b), las métricas de calidad como el método del codo y el coeficiente de silueta sugieren la formación de un número pequeño de clusters (k=2 a 4), lo que corresponde al núcleo sincronizado principal y uno o más grupos de 'drifters'.
 
 \begin{figure}[htbp]
     \centering
@@ -146,27 +143,27 @@ Para cuantificar la emergencia de estructuras coherentes, se aplicó un análisi
 
 
 \subsection{Análisis Detallado del Núcleo de Hubs}
-Un análisis visual enfocado exclusivamente en el esqueleto de la red (Figura \ref{fig:hubs}) refuerza estos hallazgos. Utilizando un layout optimizado que resalta las relaciones entre nodos centrales, se observa claramente cómo los hubs (nodos más grandes) lideran la formación del cluster (se vuelven pálidos en la Figura \ref{fig:hubs}b), pero no son necesariamente los miembros más perfectamente sincronizados, ya que retienen un color residual.
+Un análisis visual enfocado exclusivamente en el esqueleto de la red (Figuras \ref{fig:hubs_a}, \ref{fig:hubs_b} y \ref{fig:hubs_c}) refuerza estos hallazgos. Utilizando un layout optimizado que resalta las relaciones entre nodos centrales, se observa claramente cómo los hubs (nodos más grandes) lideran la formación del cluster (se vuelven pálidos en la Figura \ref{fig:hubs_b}), pero no son necesariamente los miembros más perfectamente sincronizados, ya que retienen un color residual.
 
 \begin{figure}[htbp]
     \centering
-    \begin{subfigure}[b]{\textwidth}
-        \centering
-        \includegraphics[width=0.8\textwidth]{img/3_1.png}
-        \caption{Estado desordenado.}
-    \end{subfigure}
-    \begin{subfigure}[b]{\textwidth}
-        \centering
-        \includegraphics[width=0.8\textwidth]{img/3_2.png}
-        \caption{Sincronización parcial.}
-    \end{subfigure}
-    \begin{subfigure}[b]{\textwidth}
-        \centering
-        \includegraphics[width=0.8\textwidth]{img/3_3.png}
-        \caption{Sincronización fuerte.}
-    \end{subfigure}
-    \caption{Visualización del núcleo de hubs en los tres regímenes. El color representa la frecuencia efectiva.}
-    \label{fig:hubs}
+    \includegraphics[width=\textwidth]{img/3_1.png}
+    \caption{Visualización del núcleo de hubs - Estado desordenado. El color representa la frecuencia efectiva.}
+    \label{fig:hubs_a}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{img/3_2.png}
+    \caption{Visualización del núcleo de hubs - Sincronización parcial. El color representa la frecuencia efectiva.}
+    \label{fig:hubs_b}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{img/3_3.png}
+    \caption{Visualización del núcleo de hubs - Sincronización fuerte. El color representa la frecuencia efectiva.}
+    \label{fig:hubs_c}
 \end{figure}
 
 
