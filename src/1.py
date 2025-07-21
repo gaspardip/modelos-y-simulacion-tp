@@ -10,7 +10,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
-from utils import *
+from utils import N, K_VALUES_SWEEP, run_simulation, run_simulation_complete_graph, generate_random_network
 
 def run_sweep_analysis(network_type, G, thetas, omegas):
     """
@@ -23,20 +23,23 @@ def run_sweep_analysis(network_type, G, thetas, omegas):
     r_results = []
     start_time = time.time()
 
-    # Para redes completas, usar matriz densa es más eficiente
+    # Para redes completas, usar la optimización analítica (sin matriz densa)
     if network_type == "Grafo Completo":
-        A_gpu = cp.asarray(nx.to_numpy_array(G), dtype=cp.float32)
-        degrees_gpu = cp.full(N, N-1, dtype=cp.float32)  # Todos tienen grado N-1
+        print("    Usando optimización analítica para grafo completo (sin matriz densa)")
+        for i, K in enumerate(K_VALUES_SWEEP):
+            print(f"  Calculando... K = {K:.2f} ({i+1}/{len(K_VALUES_SWEEP)})")
+            r, *_ = run_simulation_complete_graph(K, thetas, omegas)
+            r_results.append(r.get())  # .get() mueve el resultado de GPU a CPU
     else:
         # Para redes sparse, convertir a formato CSR de CuPy
         A_scipy = nx.to_scipy_sparse_array(G, format='csr', dtype=np.float32)
         A_gpu = cp.sparse.csr_matrix(A_scipy)
         degrees_gpu = cp.array(A_scipy.sum(axis=1).flatten(), dtype=cp.float32)
-
-    for i, K in enumerate(K_VALUES_SWEEP):
-        print(f"  Calculando... K = {K:.2f} ({i+1}/{len(K_VALUES_SWEEP)})")
-        r, *_ = run_simulation(K, A_gpu, thetas, omegas, degrees_gpu)
-        r_results.append(r.get())  # .get() mueve el resultado de GPU a CPU
+        
+        for i, K in enumerate(K_VALUES_SWEEP):
+            print(f"  Calculando... K = {K:.2f} ({i+1}/{len(K_VALUES_SWEEP)})")
+            r, *_ = run_simulation(K, A_gpu, thetas, omegas, degrees_gpu)
+            r_results.append(r.get())  # .get() mueve el resultado de GPU a CPU
 
     end_time = time.time()
 

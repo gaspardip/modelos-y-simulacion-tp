@@ -4,11 +4,9 @@ import networkx as nx
 from tqdm import tqdm
 from cupyx.scipy import sparse
 
-SEED = 42
-
 # Parámetros de la Red
 N = 10000
-M_SCALE_FREE = 3
+M_SCALE_FREE = 5
 
 # Parámetros de la Dinámica
 OMEGA_MU = 0.0
@@ -17,11 +15,70 @@ T_TRANSIENT = 5.0    # Tiempo transitorio (descartado)
 T_MEASURE = 5.0      # Tiempo de medición para calcular r
 DT = 0.05            # Paso del tiempo para el integrador RK4
 
+# Nota sobre medición del parámetro de orden:
+# El parámetro de orden r(t) se muestrea cada 10 pasos temporales (cada 0.5 unidades
+# de tiempo) durante la fase de medición. Luego se aplica integración ponderada por
+# tiempo usando la regla trapezoidal para obtener el promedio temporal verdadero:
+# ⟨r⟩_T = (1/T) ∫[0→T] r(t) dt
+# Esto es especialmente importante cerca de transiciones de fase donde r(t) puede
+# tener fluctuaciones lentas o deriva que sesgaría un promedio aritmético simple.
+
 K_VALUES_SWEEP = np.linspace(0, 5, 50)
 R_THRESHOLD = 0.4    # Umbral para definir la sincronización (ajustado para scale-free)
 
 # Debug: Para redes scale-free, el threshold puede ser más bajo debido a heterogeneidad
 # Threshold más bajo permite detectar Kc cuando r≈0.4 en lugar de r≈0.5
+
+def time_weighted_average(r_values, dt_sample):
+    """
+    Compute time-weighted average of order parameter using trapezoidal rule.
+    
+    This properly accounts for the continuous evolution of the order parameter
+    r(t) during the measurement period, avoiding bias in slow transitions near
+    the critical coupling where simple arithmetic averaging can be misleading.
+    
+    Physical motivation: The order parameter r(t) fluctuates continuously,
+    and near phase transitions it may have slow oscillations or drift.
+    Time integration gives the true time-averaged value: ⟨r⟩_T = (1/T) ∫ r(t) dt
+    
+    Args:
+        r_values: Array of order parameter samples
+        dt_sample: Time interval between samples (e.g., 10*DT = 0.5)
+        
+    Returns:
+        Time-weighted average of r using trapezoidal integration
+    """
+    r_values = cp.asarray(r_values)
+    
+    if len(r_values) < 2:
+        return r_values[0] if len(r_values) == 1 else 0.0
+    
+    # Trapezoidal integration: ∫r(t)dt ≈ dt * [r0/2 + r1 + r2 + ... + rN/2]
+    integral = 0.5 * (r_values[0] + r_values[-1]) + cp.sum(r_values[1:-1])
+    total_time = (len(r_values) - 1) * dt_sample
+    
+    # Return time-averaged value: (1/T) ∫ r(t) dt
+    return integral * dt_sample / total_time
+
+def kuramoto_odes_complete_graph(thetas, K, omegas):
+    """
+    Versión optimizada para grafos completos usando las identidades trigonométricas:
+    sum_j sin(θj-θi) = cos(θi)*sum_j sin(θj) - sin(θi)*sum_j cos(θj)
+    Evita crear la matriz densa NxN completa pero mantiene equivalencia exacta.
+    """
+    N = len(thetas)
+    
+    # Calcular las sumas trigonométricas una sola vez
+    sum_sin = cp.sum(cp.sin(thetas))
+    sum_cos = cp.sum(cp.cos(thetas))
+    
+    # Aplicar la identidad trigonométrica para cada nodo
+    interactions = cp.cos(thetas) * sum_sin - cp.sin(thetas) * sum_cos
+    
+    # Para grafo completo, cada nodo tiene grado N-1
+    dthetas_dt = omegas + (K / (N - 1)) * interactions
+    
+    return dthetas_dt
 
 def kuramoto_odes(thetas, K, A_sparse, omegas, degrees):
     """
@@ -46,6 +103,34 @@ def kuramoto_odes(thetas, K, A_sparse, omegas, degrees):
 
     return dthetas_dt
 
+def rk4_step_complete_graph(thetas, dt, K, omegas):
+    """
+    Versión optimizada de RK4 para grafos completos usando fórmula analítica.
+    """
+    dt_half = 0.5 * dt
+    dt_six  = dt / 6.0
+
+    # k1: Derivada al inicio del intervalo
+    k1 = kuramoto_odes_complete_graph(thetas, K, omegas)
+
+    # k2: Derivada en el punto medio, usando k1
+    k2 = kuramoto_odes_complete_graph(thetas + dt_half * k1, K, omegas)
+
+    # k3: Derivada en el punto medio, usando k2
+    k3 = kuramoto_odes_complete_graph(thetas + dt_half * k2, K, omegas)
+
+    # k4: Derivada al final del intervalo, usando k3
+    k4 = kuramoto_odes_complete_graph(thetas + k3 * dt, K, omegas)
+
+    # Actualización final con el promedio ponderado de las derivadas
+    thetas += dt_six * (k1 + 2*k2 + 2*k3 + k4)
+
+    # Normalizar fases al rango [0, 2π] para evitar problemas numéricos
+    two_pi = thetas.dtype.type(2.0) * cp.pi
+    thetas %= two_pi
+
+    return thetas
+
 def rk4_step(thetas, dt, K, A_sparse, omegas, degrees):
     """
     Realiza un único paso de integración usando el método RK4 en la GPU.
@@ -69,10 +154,45 @@ def rk4_step(thetas, dt, K, A_sparse, omegas, degrees):
     thetas += dt_six * (k1 + 2*k2 + 2*k3 + k4)
 
     # Normalizar fases al rango [0, 2π] para evitar problemas numéricos
+    # Usar modulo (%) en lugar de remainder para evitar discontinuidades
     two_pi = thetas.dtype.type(2.0) * cp.pi
-    cp.remainder(thetas, two_pi, out=thetas)
+    thetas %= two_pi
 
     return thetas
+
+def run_simulation_complete_graph(K, thetas_0, omegas):
+    """
+    Versión optimizada de simulación para grafos completos.
+    No requiere matriz de adyacencia ni array de grados.
+    """
+    num_steps_transient = int(T_TRANSIENT / DT)
+    num_steps_measure = int(T_MEASURE / DT)
+    thetas_current = thetas_0.copy()
+
+    # Fase transitoria
+    for _ in range(num_steps_transient):
+        thetas_current = rk4_step_complete_graph(thetas_current, DT, K, omegas)
+
+    # Fase de medición
+    r_values = []
+    for i in range(num_steps_measure):
+        thetas_current = rk4_step_complete_graph(thetas_current, DT, K, omegas)
+
+        # Calcular r cada 10 pasos para promediar
+        # Nota: El muestreo cada 10 pasos es suficiente para capturar la dinámica
+        # del parámetro de orden, ya que las fluctuaciones rápidas se promedian
+        # naturalmente en la integración temporal posterior
+        if i % 10 == 0:
+            exp_thetas = cp.exp(1j * thetas_current)
+            r = cp.abs(cp.mean(exp_thetas))
+            r_values.append(r)
+
+    # Promedio ponderado por tiempo de r en el estado estacionario
+    # Sampling interval: 10 pasos * DT = 10 * 0.05 = 0.5 time units
+    dt_sample = 10 * DT
+    r_final = time_weighted_average(r_values, dt_sample)
+
+    return r_final, thetas_current, r_values
 
 def run_simulation(K, A_sparse, thetas_0, omegas, degrees):
     """
@@ -95,22 +215,28 @@ def run_simulation(K, A_sparse, thetas_0, omegas, degrees):
         thetas_current = rk4_step(thetas_current, DT, K, A_sparse, omegas, degrees)
 
         # Calcular r cada 10 pasos para promediar
+        # Nota: El muestreo cada 10 pasos es suficiente para capturar la dinámica
+        # del parámetro de orden, ya que las fluctuaciones rápidas se promedian
+        # naturalmente en la integración temporal posterior
         if i % 10 == 0:
             exp_thetas = cp.exp(1j * thetas_current)
             r = cp.abs(cp.mean(exp_thetas))
             r_values.append(r)
 
-    # Promedio de r en el estado estacionario
-    r_final = cp.mean(cp.array(r_values))
+    # Promedio ponderado por tiempo de r en el estado estacionario
+    # Sampling interval: 10 pasos * DT = 10 * 0.05 = 0.5 time units
+    dt_sample = 10 * DT
+    r_final = time_weighted_average(r_values, dt_sample)
 
     return r_final, thetas_current, r_values
 
-def generate_random_network(seed = True):
+def generate_random_network(seed = None):
     print(f"Generando Red Libre de Escala (N={N}, m={M_SCALE_FREE})...")
 
-    if seed:
-        cp.random.seed(SEED)
-        G = nx.barabasi_albert_graph(N, M_SCALE_FREE, seed=SEED)
+    if seed is not None:
+        np.random.seed(seed)
+        cp.random.seed(seed)
+        G = nx.barabasi_albert_graph(N, M_SCALE_FREE, seed=seed)
     else:
         G = nx.barabasi_albert_graph(N, M_SCALE_FREE)
 
@@ -235,7 +361,7 @@ def run_full_analysis(G, thetas, omegas):
             (1.0 * kc_value, "partial"),  # Estado en Kc (r ≈ 0.5)
             (1.8 * kc_value, "sync")     # Estado sincronizado (r ≈ 0.8-0.9)
         ]
-        
+
         print(f"    Ratios mejorados: 0.5*Kc={0.5*kc_value:.3f}, 1.0*Kc={kc_value:.3f}, 1.8*Kc={1.8*kc_value:.3f}")
 
         for K, state_name in additional_K_values:
