@@ -209,8 +209,10 @@ def run_simulation(K, A_sparse, thetas_0, omegas, degrees):
             r = cp.abs(cp.mean(exp_thetas))
             r_values.append(r)
 
-    # Promedio de r en el estado estacionario
-    r_final = cp.mean(cp.array(r_values))
+    # Promedio ponderado por tiempo de r en el estado estacionario
+    # Sampling interval: 10 pasos * DT = 10 * 0.05 = 0.5 time units
+    dt_sample = 10 * DT
+    r_final = time_weighted_average(r_values, dt_sample)
 
     return r_final, thetas_current, r_values
 
