@@ -17,12 +17,12 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import time
 from utils import (
-    generate_random_network, run_full_analysis, find_kc,
-    K_VALUES_SWEEP, run_simulation
+    generate_random_network, run_full_analysis,
+    K_VALUES_SWEEP, run_simulation, T_MEASURE, R_THRESHOLD
 )
 
 # Parámetros de visualización optimizada
-TOP_HUBS_PERCENT = 0.05  # Solo mostrar top 0.3% de hubs (~30 nodos)
+TOP_HUBS_PERCENT = 0.05  # Solo mostrar top 0.5% de hubs
 MIN_NODES_TO_SHOW = 20  # Mínimo de nodos a mostrar
 MAX_NODES_TO_SHOW = 100  # Máximo de nodos para claridad
 
@@ -31,7 +31,6 @@ def run_optimized_sweep_and_get_dynamics(G, thetas_0, omegas):
     Versión optimizada del barrido usando utils.py para obtener dinámicas.
     Calcula frecuencias efectivas para análisis adicional.
     """
-    print("Iniciando barrido optimizado usando utils.py...")
 
     # Usar run_full_analysis de utils.py para obtener estados clave
     results = run_full_analysis(G, thetas_0, omegas)
@@ -59,7 +58,6 @@ def run_optimized_sweep_and_get_dynamics(G, thetas_0, omegas):
             r, thetas_final, _ = run_simulation(K, A_sparse, thetas_start, omegas, degrees)
 
             # Calcular frecuencias efectivas como diferencia de fases normalizada
-            from utils import T_MEASURE
             effective_freqs = (thetas_final - thetas_start) / T_MEASURE
             effective_freqs_dict[state_name] = {
                 'K': K,
@@ -189,41 +187,6 @@ def visualize_optimized_final_state(G, effective_freqs_gpu, title, K, r_global):
     plt.tight_layout()
     plt.show()
 
-def plot_optimization_comparison(r_values, kc_calculated):
-    """Gráfico de curva r vs K con información de optimización"""
-    plt.figure(figsize=(12, 8))
-    plt.plot(K_VALUES_SWEEP, r_values, 'b-', linewidth=2, label='Parámetro de orden r')
-
-    if kc_calculated is not None:
-        plt.axvline(x=kc_calculated, color='red', linestyle='--', linewidth=2,
-                   label=f'Kc crítico = {kc_calculated:.3f}')
-
-        # Marcar los puntos de análisis
-        analysis_points = [
-            (0.5 * kc_calculated, 'Desincronizado'),
-            (1.0 * kc_calculated, 'En Kc'),
-            (1.8 * kc_calculated, 'Sincronizado')
-        ]
-
-        colors = ['green', 'red', 'purple']
-        for i, (K_point, label) in enumerate(analysis_points):
-            plt.axvline(x=K_point, color=colors[i], linestyle=':', alpha=0.7,
-                       label=f'{label} (K={K_point:.2f})')
-
-    from utils import R_THRESHOLD
-    plt.axhline(y=R_THRESHOLD, color='gray', linestyle=':', alpha=0.7,
-               label=f'Threshold = {R_THRESHOLD}')
-
-    plt.xlabel('Acoplamiento K', fontsize=14)
-    plt.ylabel('Parámetro de orden r', fontsize=14)
-    plt.title('Curva de Sincronización Optimizada\n(Usando utils.py + Análisis de Frecuencias)', fontsize=16)
-    plt.grid(True, alpha=0.3)
-    plt.legend(fontsize=12)
-    plt.xlim(0, 5)
-    plt.ylim(0, 1)
-    plt.tight_layout()
-    plt.show()
-
 # --- 3. SCRIPT PRINCIPAL OPTIMIZADO ---
 if __name__ == "__main__":
     # --- PASO 0: Generación de la Red y Datos Iniciales ---
@@ -246,9 +209,6 @@ if __name__ == "__main__":
     # --- PASO 2: Visualización de Resultados ---
     if kc_calculated is not None:
         print(f"\nUmbral Crítico (Kc) calculado: {kc_calculated:.4f}")
-
-        # Mostrar curva de sincronización
-        plot_optimization_comparison(r_values, kc_calculated)
 
         # --- PASO 3: Análisis Visual de Estados Clave ---
         state_titles = {
@@ -276,4 +236,3 @@ if __name__ == "__main__":
                 print(f"\nNo se encontraron datos para: {title}")
     else:
         print("No se pudo determinar un Kc con el threshold actual.")
-        plot_optimization_comparison(r_values, None)

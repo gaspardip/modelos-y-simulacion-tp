@@ -1,12 +1,8 @@
 # ==============================================================================
-# SCRIPT 1: ANÁLISIS CUANTITATIVO A GRAN ESCALA (r vs. K) - VERSIÓN OPTIMIZADA
+# SCRIPT 1: ANÁLISIS CUANTITATIVO A GRAN ESCALA (r vs. K)
 # ==============================================================================
 # Propósito: Generar el gráfico comparativo de la transición a la sincronización
 # para un Grafo Completo y una Red Libre de Escala con N=10000 nodos.
-#
-# Tecnología:
-# - CuPy para aceleración por GPU.
-# - Integrador RK4 para resolver las EDOs directamente en la GPU.
 # ==============================================================================
 
 import cupy as cp
