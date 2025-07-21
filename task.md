@@ -12,7 +12,7 @@ Fix the order parameter averaging in utils.py to use proper time-weighted integr
 - [x] Add `time_weighted_average()` utility function using trapezoidal rule integration (src/utils.py)
 - [x] Replace simple averaging with time-weighted averaging in `run_simulation_complete_graph()` (src/utils.py:149)
 - [x] Replace simple averaging with time-weighted averaging in `run_simulation()` (src/utils.py:180)
-- [ ] Update comments to document the physical motivation for time-weighted averaging
+- [x] Update comments to document the physical motivation for time-weighted averaging
 - [ ] Test with simple simulation to verify order parameter values are reasonable
 - [ ] User test: Run script 1 and verify synchronization curves look smoother near transitions
 

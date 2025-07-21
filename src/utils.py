@@ -15,6 +15,14 @@ T_TRANSIENT = 5.0    # Tiempo transitorio (descartado)
 T_MEASURE = 5.0      # Tiempo de medición para calcular r
 DT = 0.05            # Paso del tiempo para el integrador RK4
 
+# Nota sobre medición del parámetro de orden:
+# El parámetro de orden r(t) se muestrea cada 10 pasos temporales (cada 0.5 unidades
+# de tiempo) durante la fase de medición. Luego se aplica integración ponderada por
+# tiempo usando la regla trapezoidal para obtener el promedio temporal verdadero:
+# ⟨r⟩_T = (1/T) ∫[0→T] r(t) dt
+# Esto es especialmente importante cerca de transiciones de fase donde r(t) puede
+# tener fluctuaciones lentas o deriva que sesgaría un promedio aritmético simple.
+
 K_VALUES_SWEEP = np.linspace(0, 5, 50)
 R_THRESHOLD = 0.4    # Umbral para definir la sincronización (ajustado para scale-free)
 
@@ -171,6 +179,9 @@ def run_simulation_complete_graph(K, thetas_0, omegas):
         thetas_current = rk4_step_complete_graph(thetas_current, DT, K, omegas)
 
         # Calcular r cada 10 pasos para promediar
+        # Nota: El muestreo cada 10 pasos es suficiente para capturar la dinámica
+        # del parámetro de orden, ya que las fluctuaciones rápidas se promedian
+        # naturalmente en la integración temporal posterior
         if i % 10 == 0:
             exp_thetas = cp.exp(1j * thetas_current)
             r = cp.abs(cp.mean(exp_thetas))
@@ -204,6 +215,9 @@ def run_simulation(K, A_sparse, thetas_0, omegas, degrees):
         thetas_current = rk4_step(thetas_current, DT, K, A_sparse, omegas, degrees)
 
         # Calcular r cada 10 pasos para promediar
+        # Nota: El muestreo cada 10 pasos es suficiente para capturar la dinámica
+        # del parámetro de orden, ya que las fluctuaciones rápidas se promedian
+        # naturalmente en la integración temporal posterior
         if i % 10 == 0:
             exp_thetas = cp.exp(1j * thetas_current)
             r = cp.abs(cp.mean(exp_thetas))
