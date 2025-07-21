@@ -4,7 +4,7 @@ Computational physics research project analyzing synchronization phenomena in co
 
 ## Features
 - GPU-accelerated simulations of coupled oscillators (N=10,000 nodes)
-- Compares synchronization in complete graphs vs scale-free networks 
+- Compares synchronization in complete graphs vs scale-free networks
 - Analyzes phase transitions from disorder to synchronization
 - Statistical analysis of critical coupling thresholds with multiprocessing parallelization
 - Automated pipeline for comprehensive network analysis
@@ -34,6 +34,3 @@ Computational physics research project analyzing synchronization phenomena in co
 - Lint: pylint src/*.py or flake8 src/*.py
 - Dev/Run: python src/[1-4].py (requires CUDA GPU)
 - LaTeX: pdflatex tp.tex
-
-## Testing
-No testing framework currently set up. Recommend adding pytest for unit and integration tests of numerical functions.

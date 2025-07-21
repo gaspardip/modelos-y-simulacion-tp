@@ -18,44 +18,68 @@ import time
 from tqdm import tqdm
 import multiprocessing as mp
 from functools import partial
-from utils import N, generate_random_network, sweep_analysis, find_kc
+import cupy as cp
+from utils import N, R_THRESHOLD, generate_random_network, run_simulation, prepare_sparse_matrix
 
 NUM_RUNS = 1000
 
-def find_kc_for_single_run(G, omegas_0, thetas_0):
+def find_kc_adaptive(G, omegas_0, thetas_0, max_iterations=8):
     """
-    Realiza un barrido de K para una única red y devuelve su Kc.
+    Finds Kc using adaptive binary search instead of full sweep.
     """
-    r_values = sweep_analysis(G, omegas_0, thetas_0)
-    # Convert list to numpy array for find_kc
-    kc = find_kc(np.array(r_values))
-    return kc
+    A_sparse, degrees = prepare_sparse_matrix(G)
+
+    k_low, k_high = 0.0, 6.0
+
+    for _ in range(max_iterations):
+        k_mid = (k_low + k_high) / 2.0
+
+        # Run single simulation at k_mid
+        r, _, _ = run_simulation(k_mid, A_sparse, omegas_0, thetas_0, degrees)
+        r_cpu = float(r.get())
+
+        if r_cpu > R_THRESHOLD:
+            k_high = k_mid
+        else:
+            k_low = k_mid
+
+        # Early convergence check
+        if abs(k_high - k_low) < 0.05:
+            break
+
+    # Return the transition point (upper bound when synchronized)
+    return k_high if r_cpu > R_THRESHOLD else None
 
 def worker_process_run(run_id, seed):
     """
-    Worker function for parallel processing of a single run.
-    Each process gets its own random seed to ensure different networks.
-
-    Note: Each process will use GPU memory independently. If running out of
-    GPU memory, reduce the number of processes or consider using
-    cp.cuda.MemoryPool() for better memory management.
+    Optimized worker with GPU memory management and adaptive Kc finding.
     """
-    # Generate a new network and initial conditions
-    G, omegas_0, thetas_0 = generate_random_network(seed=seed + run_id)
+    try:
+        # Clear GPU memory at start
+        cp.get_default_memory_pool().free_all_blocks()
 
-    # Calculate Kc for this instance
-    kc = find_kc_for_single_run(G, omegas_0, thetas_0)
+        # Generate a new network and initial conditions
+        G, omegas_0, thetas_0 = generate_random_network(seed=seed + run_id)
 
-    return kc
+        # Use adaptive Kc finding (8 sims instead of 50)
+        kc = find_kc_adaptive(G, omegas_0, thetas_0)
+
+        return kc
+    except Exception as e:
+        print(f"Worker {run_id} failed: {e}")
+        return None
+    finally:
+        # Cleanup GPU memory
+        cp.get_default_memory_pool().free_all_blocks()
 
 # --- 3. SCRIPT PRINCIPAL DE EJECUCIÓN ---
 if __name__ == "__main__":
     print(f"Iniciando análisis estadístico con {NUM_RUNS} corridas para N={N}...")
 
-    # Determine optimal number of processes
-    num_processes = min(mp.cpu_count() - 1, 8)  # Leave one CPU free, max 8 processes
+    # Use most available cores - binary search uses much less GPU memory
+    num_processes = mp.cpu_count() - 1  # Leave one CPU free
     print(f"Usando {num_processes} procesos paralelos...")
-    print(f"Esperando reducción de tiempo de ~{NUM_RUNS}x a ~{NUM_RUNS//num_processes}x")
+    print(f"Estimated speedup: ~6x (adaptive Kc) + {num_processes}x (parallel) = ~{6*num_processes}x total")
 
     start_time = time.time()
 

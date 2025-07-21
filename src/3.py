@@ -1,14 +1,7 @@
 # ==============================================================================
-# SCRIPT OPTIMIZADO: PIPELINE COMPLETO DE ANÁLISIS CON OPTIMIZACIONES
+# SCRIPT 3: PIPELINE COMPLETO DE ANÁLISIS
 # ==============================================================================
 # Propósito: Analizar frecuencias efectivas y visualización filtrada de hubs.
-# Refactorizado para usar las utilidades optimizadas de utils.py.
-#
-# Optimizaciones implementadas:
-# 1. Uso de utils.py para simulaciones optimizadas
-# 2. Cálculo eficiente de frecuencias efectivas
-# 3. Visualización filtrada (solo hubs principales)
-# 4. Integración con funciones estándar del proyecto
 # ==============================================================================
 
 import cupy as cp
@@ -18,7 +11,7 @@ import matplotlib.pyplot as plt
 import time
 from utils import (
     generate_random_network, run_full_analysis,
-    K_VALUES_SWEEP, run_simulation, T_MEASURE, R_THRESHOLD
+    run_simulation_with_frequency_tracking
 )
 
 # Parámetros de visualización optimizada
@@ -53,12 +46,9 @@ def run_optimized_sweep_and_get_dynamics(G, thetas_0, omegas):
         for K, state_name in key_K_values:
             print(f"  Calculando frecuencias efectivas para estado {state_name} (K={K:.3f})...")
 
-            # Simular y calcular frecuencias efectivas
+            # Simular y calcular frecuencias efectivas usando método científicamente correcto
             thetas_start = thetas_0.copy()
-            r, thetas_final, _ = run_simulation(K, A_sparse, thetas_start, omegas, degrees)
-
-            # Calcular frecuencias efectivas como diferencia de fases normalizada
-            effective_freqs = (thetas_final - thetas_start) / T_MEASURE
+            r, thetas_final, effective_freqs = run_simulation_with_frequency_tracking(K, A_sparse, thetas_start, omegas, degrees)
             effective_freqs_dict[state_name] = {
                 'K': K,
                 'r': r.get(),

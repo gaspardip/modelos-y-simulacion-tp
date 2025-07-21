@@ -8,12 +8,12 @@ from cupyx.scipy import sparse
 N = 10000
 M_SCALE_FREE = 5
 
-# Parámetros de la Dinámica
+# Parámetros de la dinámica
 OMEGA_MU = 0.0
 OMEGA_SIGMA = 0.5
-T_TRANSIENT = 5.0    # Tiempo transitorio (descartado)
-T_MEASURE = 5.0      # Tiempo de medición para calcular r
-DT = 0.05            # Paso del tiempo para el integrador RK4
+T_TRANSIENT = 5    # Tiempo transitorio (descartado)
+T_MEASURE = 10      # Tiempo de medición para calcular r
+DT = 0.01            # Paso del tiempo para el integrador RK4
 
 # Nota sobre medición del parámetro de orden:
 # El parámetro de orden r(t) se muestrea cada 10 pasos temporales (cada 0.5 unidades
@@ -24,7 +24,7 @@ DT = 0.05            # Paso del tiempo para el integrador RK4
 # tener fluctuaciones lentas o deriva que sesgaría un promedio aritmético simple.
 
 K_VALUES_SWEEP = np.linspace(0, 5, 50)
-R_THRESHOLD = 0.4    # Umbral para definir la sincronización (ajustado para scale-free)
+R_THRESHOLD = 0.5    # Umbral para definir la sincronización
 
 # Debug: Para redes scale-free, el threshold puede ser más bajo debido a heterogeneidad
 # Threshold más bajo permite detectar Kc cuando r≈0.4 en lugar de r≈0.5
@@ -32,33 +32,108 @@ R_THRESHOLD = 0.4    # Umbral para definir la sincronización (ajustado para sca
 def time_weighted_average(r_values, dt_sample):
     """
     Compute time-weighted average of order parameter using trapezoidal rule.
-    
+
     This properly accounts for the continuous evolution of the order parameter
     r(t) during the measurement period, avoiding bias in slow transitions near
     the critical coupling where simple arithmetic averaging can be misleading.
-    
+
     Physical motivation: The order parameter r(t) fluctuates continuously,
     and near phase transitions it may have slow oscillations or drift.
     Time integration gives the true time-averaged value: ⟨r⟩_T = (1/T) ∫ r(t) dt
-    
+
     Args:
         r_values: Array of order parameter samples
         dt_sample: Time interval between samples (e.g., 10*DT = 0.5)
-        
+
     Returns:
         Time-weighted average of r using trapezoidal integration
     """
     r_values = cp.asarray(r_values)
-    
+
     if len(r_values) < 2:
         return r_values[0] if len(r_values) == 1 else 0.0
-    
+
     # Trapezoidal integration: ∫r(t)dt ≈ dt * [r0/2 + r1 + r2 + ... + rN/2]
     integral = 0.5 * (r_values[0] + r_values[-1]) + cp.sum(r_values[1:-1])
     total_time = (len(r_values) - 1) * dt_sample
-    
+
     # Return time-averaged value: (1/T) ∫ r(t) dt
     return integral * dt_sample / total_time
+
+def time_weighted_frequency_average(freq_values, dt_sample):
+    """
+    Compute time-weighted average of instantaneous frequencies using trapezoidal rule.
+
+    This function follows the same pattern as time_weighted_average() for the order
+    parameter, ensuring consistent temporal averaging across all measurements.
+
+    Physical motivation: Near phase transitions, instantaneous frequencies ω(t)
+    can fluctuate or drift as oscillators adjust to network coupling. Simple
+    endpoint differences (θ_final - θ_initial)/T miss this complex dynamics
+    and can be misleading due to phase wrapping at 2π boundaries.
+
+    Time integration gives the true time-averaged frequency:
+    ⟨ω⟩_T = (1/T) ∫[0,T] ω(t) dt
+
+    Args:
+        freq_values: Array of instantaneous frequency samples (N_nodes x N_samples)
+        dt_sample: Time interval between samples (e.g., 10*DT = 0.1)
+
+    Returns:
+        Time-weighted average frequencies for each node
+    """
+    freq_values = cp.asarray(freq_values)
+
+    if freq_values.ndim == 1:
+        # Single time series case
+        if len(freq_values) < 2:
+            return freq_values[0] if len(freq_values) == 1 else 0.0
+
+        # Trapezoidal integration
+        integral = 0.5 * (freq_values[0] + freq_values[-1]) + cp.sum(freq_values[1:-1])
+        total_time = (len(freq_values) - 1) * dt_sample
+        return integral * dt_sample / total_time
+
+    else:
+        # Multiple time series (N_nodes x N_samples)
+        if freq_values.shape[1] < 2:
+            return freq_values[:, 0] if freq_values.shape[1] == 1 else cp.zeros(freq_values.shape[0])
+
+        # Vectorized trapezoidal integration across all nodes
+        integral = 0.5 * (freq_values[:, 0] + freq_values[:, -1]) + cp.sum(freq_values[:, 1:-1], axis=1)
+        total_time = (freq_values.shape[1] - 1) * dt_sample
+        return integral * dt_sample / total_time
+
+def unwrap_phases(phase_history):
+    """
+    Unwrap phase trajectories to handle 2π discontinuities in frequency calculations.
+
+    When phases wrap around the 2π boundary, simple differences (θ_final - θ_initial)
+    can give misleading frequency measurements. This function unwraps the phase
+    evolution to ensure continuity for accurate frequency calculation.
+
+    Physical motivation: Oscillator phases naturally evolve continuously, but
+    numerical representations are bounded to [0, 2π]. Near synchronization
+    transitions, oscillators may complete multiple rotations, and the cumulative
+    phase change is more meaningful than the wrapped final position.
+
+    Args:
+        phase_history: Array of phase values over time (N_nodes x N_samples) or (N_samples,)
+
+    Returns:
+        Unwrapped phases with 2π discontinuities removed
+    """
+    phase_history = cp.asarray(phase_history)
+
+    if phase_history.ndim == 1:
+        # Single time series case
+        return cp.unwrap(phase_history)
+    else:
+        # Multiple time series - unwrap each node separately
+        unwrapped = cp.zeros_like(phase_history)
+        for i in range(phase_history.shape[0]):
+            unwrapped[i, :] = cp.unwrap(phase_history[i, :])
+        return unwrapped
 
 def kuramoto_odes_complete_graph(thetas, K, omegas):
     """
@@ -230,6 +305,62 @@ def run_simulation(K, A_sparse, thetas_0, omegas, degrees):
 
     return r_final, thetas_current, r_values
 
+def run_simulation_with_frequency_tracking(K, A_sparse, thetas_0, omegas, degrees):
+    """
+    Extended version of run_simulation() that tracks instantaneous frequencies.
+
+    This function follows the same structure as run_simulation() but additionally
+    collects instantaneous frequency data during the measurement phase for proper
+    time-weighted frequency averaging.
+
+    Args:
+        K: Coupling strength
+        A_sparse: Sparse adjacency matrix
+        thetas_0: Initial phases
+        omegas: Natural frequencies
+        degrees: Node degrees
+
+    Returns:
+        r_final: Time-weighted average order parameter
+        thetas_final: Final phases
+        effective_freqs: Time-weighted average frequencies for each node
+    """
+    num_steps_transient = int(T_TRANSIENT / DT)
+    num_steps_measure = int(T_MEASURE / DT)
+    thetas_current = thetas_0.copy()
+
+    # Fase transitoria: Dejamos que el sistema "olvide" sus condiciones iniciales
+    for _ in range(num_steps_transient):
+        thetas_current = rk4_step(thetas_current, DT, K, A_sparse, omegas, degrees)
+
+    # Fase de medición: Colectar tanto r(t) como ω(t)
+    r_values = []
+    freq_values = []  # Store instantaneous frequencies for all nodes
+
+    for i in range(num_steps_measure):
+        thetas_current = rk4_step(thetas_current, DT, K, A_sparse, omegas, degrees)
+
+        # Muestrear cada 10 pasos para consistencia con run_simulation()
+        if i % 10 == 0:
+            # Calcular parámetro de orden
+            exp_thetas = cp.exp(1j * thetas_current)
+            r = cp.abs(cp.mean(exp_thetas))
+            r_values.append(r)
+
+            # Calcular frecuencias instantáneas
+            instantaneous_freqs = kuramoto_odes(thetas_current, K, A_sparse, omegas, degrees)
+            freq_values.append(instantaneous_freqs.copy())
+
+    # Convertir a array para procesamiento vectorizado
+    freq_values = cp.stack(freq_values, axis=1)  # Shape: (N_nodes, N_samples)
+
+    # Promedio ponderado por tiempo
+    dt_sample = 10 * DT
+    r_final = time_weighted_average(r_values, dt_sample)
+    effective_freqs = time_weighted_frequency_average(freq_values, dt_sample)
+
+    return r_final, thetas_current, effective_freqs
+
 def generate_random_network(seed = None):
     print(f"Generando Red Libre de Escala (N={N}, m={M_SCALE_FREE})...")
 
@@ -310,7 +441,6 @@ def prepare_sparse_matrix(G):
     return A_sparse, degrees
 
 def find_kc(r_results):
-    """Encuentra Kc basado en el threshold de sincronización"""
     indices = np.where(r_results > R_THRESHOLD)[0]
     return K_VALUES_SWEEP[indices[0]] if len(indices) > 0 else None
 

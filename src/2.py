@@ -1,5 +1,5 @@
 # ==============================================================================
-# SCRIPT FINAL OPTIMIZADO: PIPELINE DE ANÁLISIS AUTOMÁTICO Y DIRIGIDO
+# PIPELINE DE ANÁLISIS AUTOMÁTICO Y DIRIGIDO
 # ==============================================================================
 # Propósito: Realizar un análisis completo de una red grande, donde los puntos
 # de visualización se eligen automáticamente en relación con el umbral
@@ -9,12 +9,6 @@
 # 1. Barrido de K para obtener la curva r vs. K y los estados de fase finales.
 # 2. Cálculo automático de Kc a partir de los datos del barrido.
 # 3. Análisis visual y de clustering en tres puntos clave relativos a Kc.
-#
-# Optimizaciones implementadas:
-# 1. Uso de matrices sparse para redes libres de escala
-# 2. Almacenamiento selectivo de estados (solo los necesarios)
-# 3. Parámetros de simulación optimizados
-# 4. Visualización más eficiente
 # ==============================================================================
 
 import cupy as cp
@@ -24,8 +18,7 @@ import matplotlib.pyplot as plt
 import time
 from sklearn.cluster import KMeans
 from utils import (
-    generate_random_network, run_full_analysis,
-    K_VALUES_SWEEP
+    generate_random_network, run_full_analysis
 )
 
 def run_sweep_and_find_kc(G, thetas, omegas):
@@ -38,55 +31,6 @@ def run_sweep_and_find_kc(G, thetas, omegas):
 
     # Extraer los resultados en el formato esperado
     return results['r_values'], results['kc_value'], results['key_states']
-
-def visualize_transition_curve(k_values, r_values, kc, key_states):
-    """
-    Visualiza la curva de transición con puntos clave marcados usando valores reales de r.
-    """
-    plt.figure(figsize=(10, 6))
-    plt.plot(k_values, r_values, 'b-', linewidth=2, label='r vs K')
-
-    # Marcar Kc
-    if kc is not None:
-        plt.axvline(x=kc, color='red', linestyle='--', label=f'Kc = {kc:.3f}')
-
-    # Calcular valores reales de r para los puntos de análisis
-    # Necesitamos simular estos puntos para obtener sus r reales
-    if 'desync' in key_states and 'desync_thetas' in key_states:
-        K_desync = key_states['desync'][0]
-        thetas_desync = key_states['desync_thetas']
-        r_desync = cp.abs(cp.mean(cp.exp(1j * thetas_desync))).get()
-        plt.scatter(K_desync, r_desync, color='green', s=100, zorder=5,
-                   label=f'Desincronizado (K={K_desync:.2f}, r={r_desync:.3f})')
-
-    if 'at_kc' in key_states:
-        k_val, idx = key_states['at_kc']
-        if idx >= 0:  # Si está en el barrido original
-            r_at_kc = r_values[idx]
-        else:  # Si fue simulado por separado
-            if 'partial_sync_thetas' in key_states:
-                thetas_kc = key_states['partial_sync_thetas']
-                r_at_kc = cp.abs(cp.mean(cp.exp(1j * thetas_kc))).get()
-            else:
-                r_at_kc = 0.5  # Valor por defecto en Kc
-        plt.scatter(k_val, r_at_kc, color='red', s=100,
-                   zorder=5, label=f'En Kc (K={k_val:.2f}, r={r_at_kc:.3f})')
-
-    if 'sync' in key_states and 'sync_thetas' in key_states:
-        K_sync = key_states['sync'][0]
-        thetas_sync = key_states['sync_thetas']
-        r_sync = cp.abs(cp.mean(cp.exp(1j * thetas_sync))).get()
-        plt.scatter(K_sync, r_sync, color='purple', s=100, zorder=5,
-                   label=f'Sincronizado (K={K_sync:.2f}, r={r_sync:.3f})')
-
-    plt.xlabel('Fuerza de Acoplamiento (K)', fontsize=14)
-    plt.ylabel('Parámetro de Orden (r)', fontsize=14)
-    plt.title('Transición a la Sincronización', fontsize=16)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.ylim(-0.05, 1.05)
-    plt.tight_layout()
-    plt.show()
 
 def find_elbow_point(k_values, inertias):
     """
@@ -281,9 +225,10 @@ def analyze_hub_clusters(G, final_thetas_cpu, title, K_val):
 
     # Título general
     fig.suptitle(f'{analysis_type}\nK = {K_val:.3f}, r = {r_global:.3f}, Hubs = {len(hub_nodes)}',
-                fontsize=14, y=1.02)
+                fontsize=14, y=0.98)
 
     plt.tight_layout()
+    plt.subplots_adjust(top=0.85)
     plt.show()
 
     # 7. Interpretación automática
@@ -766,10 +711,7 @@ if __name__ == "__main__":
     else:
         print(f"Umbral Crítico (Kc) = {kc_calculated:.4f}")
 
-        # --- PASO 2: Visualizar Curva de Transición ---
-        visualize_transition_curve(K_VALUES_SWEEP, r_values, kc_calculated, key_states)
-
-        # --- PASO 3: Análisis Detallado de Estados Clave ---
+        # --- PASO 2: Análisis Detallado de Estados Clave ---
         analysis_states = [
             ("Estado Desincronizado", "desync_thetas"),
             ("Estado de Sincronización Parcial", "partial_sync_thetas"),

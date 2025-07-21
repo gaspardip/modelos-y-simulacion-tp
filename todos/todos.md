@@ -1,4 +1,3 @@
-- SCIENTIFIC: Script 3 calcula frecuencias efectivas como (θ_final-θ_inicial)/T pero cerca de transiciones esto puede ser engañoso por deriva de fase
 - SCIENTIFIC: R_THRESHOLD=0.4 es arbitrario, debería calcularse basado en la desviación estándar del ruido o características de la red
 - MEMORY LEAK: Script 2 almacena grandes arrays (key_states) sin limpiarlos, puede causar problemas de memoria en análisis largos
 - SCIENTIFIC: Falta comparación con solución analítica para grafos completos donde Kc = 2*σ_ω para distribución gaussiana de frecuencias
