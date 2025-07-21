@@ -21,6 +21,37 @@ R_THRESHOLD = 0.4    # Umbral para definir la sincronización (ajustado para sca
 # Debug: Para redes scale-free, el threshold puede ser más bajo debido a heterogeneidad
 # Threshold más bajo permite detectar Kc cuando r≈0.4 en lugar de r≈0.5
 
+def time_weighted_average(r_values, dt_sample):
+    """
+    Compute time-weighted average of order parameter using trapezoidal rule.
+    
+    This properly accounts for the continuous evolution of the order parameter
+    r(t) during the measurement period, avoiding bias in slow transitions near
+    the critical coupling where simple arithmetic averaging can be misleading.
+    
+    Physical motivation: The order parameter r(t) fluctuates continuously,
+    and near phase transitions it may have slow oscillations or drift.
+    Time integration gives the true time-averaged value: ⟨r⟩_T = (1/T) ∫ r(t) dt
+    
+    Args:
+        r_values: Array of order parameter samples
+        dt_sample: Time interval between samples (e.g., 10*DT = 0.5)
+        
+    Returns:
+        Time-weighted average of r using trapezoidal integration
+    """
+    r_values = cp.asarray(r_values)
+    
+    if len(r_values) < 2:
+        return r_values[0] if len(r_values) == 1 else 0.0
+    
+    # Trapezoidal integration: ∫r(t)dt ≈ dt * [r0/2 + r1 + r2 + ... + rN/2]
+    integral = 0.5 * (r_values[0] + r_values[-1]) + cp.sum(r_values[1:-1])
+    total_time = (len(r_values) - 1) * dt_sample
+    
+    # Return time-averaged value: (1/T) ∫ r(t) dt
+    return integral * dt_sample / total_time
+
 def kuramoto_odes_complete_graph(thetas, K, omegas):
     """
     Versión optimizada para grafos completos usando las identidades trigonométricas:

@@ -9,7 +9,7 @@ SCIENTIFIC: El promedio del parámetro de orden en utils.py línea 104 no es pon
 Fix the order parameter averaging in utils.py to use proper time-weighted integration instead of simple arithmetic mean. The current implementation samples r every 10 integration steps and takes a simple average, which can introduce bias during slow transitions near the critical coupling. We'll implement trapezoidal rule integration to properly account for the continuous evolution of the order parameter.
 
 ## Implementation Plan
-- [ ] Add `time_weighted_average()` utility function using trapezoidal rule integration (src/utils.py)
+- [x] Add `time_weighted_average()` utility function using trapezoidal rule integration (src/utils.py)
 - [ ] Replace simple averaging with time-weighted averaging in `run_simulation_complete_graph()` (src/utils.py:149)
 - [ ] Replace simple averaging with time-weighted averaging in `run_simulation()` (src/utils.py:180)
 - [ ] Update comments to document the physical motivation for time-weighted averaging
