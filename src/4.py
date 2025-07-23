@@ -19,54 +19,49 @@ from tqdm import tqdm
 import multiprocessing as mp
 from functools import partial
 import cupy as cp
-from utils import N, R_THRESHOLD, generate_random_network, run_simulation, prepare_sparse_matrix
+from utils import (N, R_THRESHOLD, K_VALUES_SWEEP, generate_random_network,
+                   prepare_sparse_matrix, batch_sweep)
 
 NUM_RUNS = 1000
 
-def find_kc_adaptive(G, omegas_0, thetas_0, max_iterations=8):
+def find_kc_batch(G, omegas_0, thetas_0):
     """
-    Finds Kc using adaptive binary search instead of full sweep.
+    Find critical coupling Kc using GPU batch sweep.
+    
+    Uses single batch simulation across all K values instead of sequential search.
     """
-    A_sparse, degrees = prepare_sparse_matrix(G)
+    A_sparse, degrees = prepare_sparse_matrix(G, quiet=True)
 
-    k_low, k_high = 0.0, 6.0
+    # Single batch simulation covering entire K-range (QUIET MODE)
+    r_results = batch_sweep(A_sparse, thetas_0, omegas_0, degrees, quiet=True)
 
-    for _ in range(max_iterations):
-        k_mid = (k_low + k_high) / 2.0
+    # Find critical transition point where r > R_THRESHOLD
+    r_values = r_results.get()  # Transfer to CPU for analysis
+    critical_indices = np.where(r_values > R_THRESHOLD)[0]
 
-        # Run single simulation at k_mid
-        r, _, _ = run_simulation(k_mid, A_sparse, omegas_0, thetas_0, degrees)
-        r_cpu = float(r.get())
-
-        if r_cpu > R_THRESHOLD:
-            k_high = k_mid
-        else:
-            k_low = k_mid
-
-        # Early convergence check
-        if abs(k_high - k_low) < 0.05:
-            break
-
-    # Return the transition point (upper bound when synchronized)
-    return k_high if r_cpu > R_THRESHOLD else None
+    if len(critical_indices) > 0:
+        # Return the first K-value where synchronization occurs
+        kc_index = critical_indices[0]
+        kc_value = K_VALUES_SWEEP[kc_index]
+        return kc_value
+    else:
+        # No synchronization found in the K-range
+        return None
 
 def worker_process_run(run_id, seed):
     """
-    Optimized worker with GPU memory management and adaptive Kc finding.
+    GPU-accelerated worker for Kc analysis.
     """
     try:
         # Clear GPU memory at start
         cp.get_default_memory_pool().free_all_blocks()
 
-        # Generate a new network and initial conditions
-        G, omegas_0, thetas_0 = generate_random_network(seed=seed + run_id)
-
-        # Use adaptive Kc finding (8 sims instead of 50)
-        kc = find_kc_adaptive(G, omegas_0, thetas_0)
+        # Generate network and find Kc
+        G, omegas_0, thetas_0 = generate_random_network(seed=seed + run_id, quiet=True)
+        kc = find_kc_batch(G, omegas_0, thetas_0)
 
         return kc
     except Exception as e:
-        print(f"Worker {run_id} failed: {e}")
         return None
     finally:
         # Cleanup GPU memory
@@ -74,39 +69,35 @@ def worker_process_run(run_id, seed):
 
 # --- 3. SCRIPT PRINCIPAL DE EJECUCIÓN ---
 if __name__ == "__main__":
-    print(f"Iniciando análisis estadístico con {NUM_RUNS} corridas para N={N}...")
-
-    # Use most available cores - binary search uses much less GPU memory
-    num_processes = mp.cpu_count() - 1  # Leave one CPU free
-    print(f"Usando {num_processes} procesos paralelos...")
-    print(f"Estimated speedup: ~6x (adaptive Kc) + {num_processes}x (parallel) = ~{6*num_processes}x total")
+    print(f"Starting Kc statistical analysis: {NUM_RUNS} runs, N={N}")
+    
+    num_processes = min(4, mp.cpu_count())
+    print(f"Using {num_processes} parallel processes")
 
     start_time = time.time()
-
-    # Use a fixed seed for reproducibility (optional)
     base_seed = int(time.time())
-
-    # Create partial function with fixed seed
     worker_with_seed = partial(worker_process_run, seed=base_seed)
 
-    # Run parallel processing with progress bar
+    # Run parallel processing with simplified progress tracking
     with mp.Pool(processes=num_processes) as pool:
-        # Use imap_unordered for better performance and progress tracking
         kc_results_raw = list(tqdm(
             pool.imap_unordered(worker_with_seed, range(NUM_RUNS)),
             total=NUM_RUNS,
-            desc="Progreso del Análisis Estadístico"
+            desc="Kc Analysis Progress",
+            unit="run"
         ))
 
-    # Filter out None results
+    # Filter results
     kc_results = [kc for kc in kc_results_raw if kc is not None]
     failed_runs = len(kc_results_raw) - len(kc_results)
 
-    if failed_runs > 0:
-        print(f"Advertencia: {failed_runs} corridas no alcanzaron la sincronización en el rango de K probado.")
-
     end_time = time.time()
-    print(f"\nAnálisis estadístico completado en {end_time - start_time:.2f} segundos.")
+    elapsed = end_time - start_time
+    
+    print(f"\nCompleted in {elapsed:.1f}s ({elapsed/NUM_RUNS:.2f}s/run)")
+    if failed_runs > 0:
+        print(f"Failed runs: {failed_runs}/{NUM_RUNS}")
+    print(f"Success rate: {len(kc_results)/NUM_RUNS*100:.1f}%")
 
     # --- 4. ANÁLISIS Y VISUALIZACIÓN DE RESULTADOS ---
     if kc_results:
@@ -116,19 +107,15 @@ if __name__ == "__main__":
         min_kc = np.min(kc_results)
         max_kc = np.max(kc_results)
 
-        print("\n======================================================")
-        print("          RESULTADOS ESTADÍSTICOS DE KC")
-        print("======================================================")
-        print(f"Número de corridas exitosas: {len(kc_results)} de {NUM_RUNS}")
-        print(f"Kc Promedio (Esperanza):   {mean_kc:.4f}")
-        print(f"Kc Mediana:                {median_kc:.4f}")
-        print(f"Desviación Estándar de Kc: {std_kc:.4f}")
-        print(f"Rango: [{min_kc:.4f}, {max_kc:.4f}]")
+        print(f"\n=== Kc Statistics (n={len(kc_results)}) ===")
+        print(f"Mean:   {mean_kc:.4f} ± {std_kc:.4f}")
+        print(f"Median: {median_kc:.4f}")
+        print(f"Range:  [{min_kc:.4f}, {max_kc:.4f}]")
 
-        # Intervalo de confianza simple
+        # 95% confidence interval
         ci_lower = mean_kc - 2*std_kc
         ci_upper = mean_kc + 2*std_kc
-        print(f"Intervalo de confianza del 95% (aprox.): ({ci_lower:.4f}, {ci_upper:.4f})")
+        print(f"95% CI: ({ci_lower:.4f}, {ci_upper:.4f})")
 
         # Visualizar la distribución de los resultados de Kc
         plt.figure(figsize=(10, 6))
@@ -142,4 +129,4 @@ if __name__ == "__main__":
         plt.grid(True, linestyle=':')
         plt.show()
     else:
-        print("No se pudo calcular ningún Kc en las corridas. Considera aumentar el rango de K_VALUES_SWEEP.")
+        print("ERROR: No successful Kc calculations. Consider increasing K_VALUES_SWEEP range.")
