@@ -8,12 +8,9 @@ from cupyx.scipy import sparse
 from kernel import (
     get_csr_arrays,
     batch_kuramoto_simulation,
-    gpu_barabasi_albert_graph,
     gpu_complete_graph,
-    gpu_to_csr_format,
-    detect_gpu_architecture
+    gpu_to_csr_format
 )
-print("GPU-optimized kernels and network generation functions loaded successfully")
 
 # Parámetros de la Red
 N = 10000
@@ -22,9 +19,9 @@ M_SCALE_FREE = 5
 # Parámetros de la dinámica
 OMEGA_MU = 0.0
 OMEGA_SIGMA = 0.5
-T_TRANSIENT = 5    # Tiempo transitorio (descartado)
-T_MEASURE = 10      # Tiempo de medición para calcular r
-DT = 0.01            # Paso del tiempo para el integrador RK4
+T_TRANSIENT = 10   # Tiempo transitorio (descartado) - Realistic for RK4
+T_MEASURE = 20     # Tiempo de medición para calcular r - Realistic for RK4
+DT = 0.05            # Paso del tiempo para el integrador RK4 - Balanced for performance
 
 # Nota sobre medición del parámetro de orden:
 # El parámetro de orden r(t) se muestrea cada 10 pasos temporales (cada 0.5 unidades
@@ -146,251 +143,17 @@ def unwrap_phases(phase_history):
             unwrapped[i, :] = cp.unwrap(phase_history[i, :])
         return unwrapped
 
-def kuramoto_odes_complete_graph(thetas, K, omegas):
-    """
-    Versión optimizada para grafos completos usando las identidades trigonométricas:
-    sum_j sin(θj-θi) = cos(θi)*sum_j sin(θj) - sin(θi)*sum_j cos(θj)
-    Evita crear la matriz densa NxN completa pero mantiene equivalencia exacta.
-    """
-    N = len(thetas)
-
-    # Calcular las sumas trigonométricas una sola vez
-    sum_sin = cp.sum(cp.sin(thetas))
-    sum_cos = cp.sum(cp.cos(thetas))
-
-    # Aplicar la identidad trigonométrica para cada nodo
-    interactions = cp.cos(thetas) * sum_sin - cp.sin(thetas) * sum_cos
-
-    # Para grafo completo, cada nodo tiene grado N-1
-    dthetas_dt = omegas + (K / (N - 1)) * interactions
-
-    return dthetas_dt
-
-def kuramoto_odes(thetas, K, A_sparse, omegas, degrees):
-    """
-    Calcula la derivada de las fases en la GPU usando operaciones sparse.
-    Evita crear la matriz completa NxN de phase_diffs.
-
-    Note: This function is only used when optimized kernels are disabled.
-    When kernels are enabled, RK4 is done in a fused manner.
-    """
-    # Para redes sparse, usar multiplicación matriz-vector es más eficiente
-    sin_thetas = cp.sin(thetas)
-    cos_thetas = cp.cos(thetas)
-
-    # Calcular las sumas ponderadas usando la matriz de adyacencia
-    sum_sin = A_sparse @ sin_thetas
-    sum_cos = A_sparse @ cos_thetas
-
-    # Calcular la derivada usando la identidad:
-    # sum(sin(theta_j - theta_i)) = cos(theta_i)*sum(sin(theta_j)) - sin(theta_i)*sum(cos(theta_j))
-    interactions = cp.cos(thetas) * sum_sin - cp.sin(thetas) * sum_cos
-
-    # Evitar división por cero
-    safe_degrees = cp.maximum(degrees, 1.0)
-    dthetas_dt = omegas + (K / safe_degrees) * interactions
-
-    return dthetas_dt
-
-def rk4_step_complete_graph(thetas, dt, K, omegas):
-    """
-    Versión optimizada de RK4 para grafos completos usando fórmula analítica.
-    """
-    dt_half = 0.5 * dt
-    dt_six  = dt / 6.0
-
-    # k1: Derivada al inicio del intervalo
-    k1 = kuramoto_odes_complete_graph(thetas, K, omegas)
-
-    # k2: Derivada en el punto medio, usando k1
-    k2 = kuramoto_odes_complete_graph(thetas + dt_half * k1, K, omegas)
-
-    # k3: Derivada en el punto medio, usando k2
-    k3 = kuramoto_odes_complete_graph(thetas + dt_half * k2, K, omegas)
-
-    # k4: Derivada al final del intervalo, usando k3
-    k4 = kuramoto_odes_complete_graph(thetas + k3 * dt, K, omegas)
-
-    # Actualización final con el promedio ponderado de las derivadas
-    thetas += dt_six * (k1 + 2*k2 + 2*k3 + k4)
-
-    # Normalizar fases al rango [0, 2π] para evitar problemas numéricos
-    two_pi = thetas.dtype.type(2.0) * cp.pi
-    thetas %= two_pi
-
-    return thetas
-
-def rk4_step(thetas, dt, K, A_sparse, omegas, degrees):
-    """
-    Realiza un único paso de integración usando el método RK4 en la GPU.
-    """
-    # Standard CuPy implementation (optimized kernels used in batch_kuramoto_simulation)
-    dt_half = 0.5 * dt
-    dt_six  = dt / 6.0
-
-    # k1: Derivada al inicio del intervalo
-    k1 = kuramoto_odes(thetas, K, A_sparse, omegas, degrees)
-
-    # k2: Derivada en el punto medio, usando k1
-    k2 = kuramoto_odes(thetas + dt_half * k1, K, A_sparse, omegas, degrees)
-
-    # k3: Derivada en el punto medio, usando k2
-    k3 = kuramoto_odes(thetas + dt_half * k2, K, A_sparse, omegas, degrees)
-
-    # k4: Derivada al final del intervalo, usando k3
-    k4 = kuramoto_odes(thetas + k3 * dt, K, A_sparse, omegas, degrees)
-
-    # Actualización final con el promedio ponderado de las derivadas
-    thetas += dt_six * (k1 + 2*k2 + 2*k3 + k4)
-
-    # Normalizar fases al rango [0, 2π] para evitar problemas numéricos
-    # Usar modulo (%) en lugar de remainder para evitar discontinuidades
-    two_pi = thetas.dtype.type(2.0) * cp.pi
-    thetas %= two_pi
-
-    return thetas
-
-def run_simulation_complete_graph(K, thetas_0, omegas):
-    """
-    Versión optimizada de simulación para grafos completos.
-    No requiere matriz de adyacencia ni array de grados.
-    """
-    num_steps_transient = int(T_TRANSIENT / DT)
-    num_steps_measure = int(T_MEASURE / DT)
-    thetas_current = thetas_0.copy()
-
-    # Fase transitoria
-    for _ in range(num_steps_transient):
-        thetas_current = rk4_step_complete_graph(thetas_current, DT, K, omegas)
-
-    # Fase de medición
-    r_values = []
-    for i in range(num_steps_measure):
-        thetas_current = rk4_step_complete_graph(thetas_current, DT, K, omegas)
-
-        # Calcular r cada 10 pasos para promediar
-        # Nota: El muestreo cada 10 pasos es suficiente para capturar la dinámica
-        # del parámetro de orden, ya que las fluctuaciones rápidas se promedian
-        # naturalmente en la integración temporal posterior
-        if i % 10 == 0:
-            exp_thetas = cp.exp(1j * thetas_current)
-            r = cp.abs(cp.mean(exp_thetas))
-            r_values.append(r)
-
-    # Promedio ponderado por tiempo de r en el estado estacionario
-    # Sampling interval: 10 pasos * DT = 10 * 0.05 = 0.5 time units
-    dt_sample = 10 * DT
-    r_final = time_weighted_average(r_values, dt_sample)
-
-    return r_final, thetas_current, r_values
-
-def run_simulation(K, A_sparse, thetas_0, omegas, degrees):
-    """
-    Simula con RK4 y devuelve el 'r' promedio.
-    Incluye fase transitoria y medición del parámetro de orden.
-    """
-    num_steps_transient = int(T_TRANSIENT / DT)
-    num_steps_measure = int(T_MEASURE / DT)
-    thetas_current = thetas_0.copy()
-
-    # Fase transitoria: Dejamos que el sistema "olvide" sus condiciones iniciales.
-    # El integrador RK4 asegura que el camino hacia el equilibrio es preciso.
-    for _ in range(num_steps_transient):
-        thetas_current = rk4_step(thetas_current, DT, K, A_sparse, omegas, degrees)
-
-    # Fase de medición: Ahora que el sistema está en su estado estacionario,
-    # medimos su comportamiento de forma robusta.
-    r_values = []
-    for i in range(num_steps_measure):
-        thetas_current = rk4_step(thetas_current, DT, K, A_sparse, omegas, degrees)
-
-        # Calcular r cada 10 pasos para promediar
-        # Nota: El muestreo cada 10 pasos es suficiente para capturar la dinámica
-        # del parámetro de orden, ya que las fluctuaciones rápidas se promedian
-        # naturalmente en la integración temporal posterior
-        if i % 10 == 0:
-            exp_thetas = cp.exp(1j * thetas_current)
-            r = cp.abs(cp.mean(exp_thetas))
-            r_values.append(r)
-
-    # Promedio ponderado por tiempo de r en el estado estacionario
-    # Sampling interval: 10 pasos * DT = 10 * 0.05 = 0.5 time units
-    dt_sample = 10 * DT
-    r_final = time_weighted_average(r_values, dt_sample)
-
-    return r_final, thetas_current, r_values
-
-def run_simulation_with_frequency_tracking(K, A_sparse, thetas_0, omegas, degrees):
-    """
-    Extended version of run_simulation() that tracks instantaneous frequencies.
-
-    This function follows the same structure as run_simulation() but additionally
-    collects instantaneous frequency data during the measurement phase for proper
-    time-weighted frequency averaging.
-
-    Args:
-        K: Coupling strength
-        A_sparse: Sparse adjacency matrix
-        thetas_0: Initial phases
-        omegas: Natural frequencies
-        degrees: Node degrees
-
-    Returns:
-        r_final: Time-weighted average order parameter
-        thetas_final: Final phases
-        effective_freqs: Time-weighted average frequencies for each node
-    """
-    num_steps_transient = int(T_TRANSIENT / DT)
-    num_steps_measure = int(T_MEASURE / DT)
-    thetas_current = thetas_0.copy()
-
-    # Fase transitoria: Dejamos que el sistema "olvide" sus condiciones iniciales
-    for _ in range(num_steps_transient):
-        thetas_current = rk4_step(thetas_current, DT, K, A_sparse, omegas, degrees)
-
-    # Fase de medición: Colectar tanto r(t) como ω(t)
-    r_values = []
-    freq_values = []  # Store instantaneous frequencies for all nodes
-
-    for i in range(num_steps_measure):
-        thetas_current = rk4_step(thetas_current, DT, K, A_sparse, omegas, degrees)
-
-        # Muestrear cada 10 pasos para consistencia con run_simulation()
-        if i % 10 == 0:
-            # Calcular parámetro de orden
-            exp_thetas = cp.exp(1j * thetas_current)
-            r = cp.abs(cp.mean(exp_thetas))
-            r_values.append(r)
-
-            # Calcular frecuencias instantáneas
-            instantaneous_freqs = kuramoto_odes(thetas_current, K, A_sparse, omegas, degrees)
-            freq_values.append(instantaneous_freqs.copy())
-
-    # Convertir a array para procesamiento vectorizado
-    freq_values = cp.stack(freq_values, axis=1)  # Shape: (N_nodes, N_samples)
-
-    # Promedio ponderado por tiempo
-    dt_sample = 10 * DT
-    r_final = time_weighted_average(r_values, dt_sample)
-    effective_freqs = time_weighted_frequency_average(freq_values, dt_sample)
-
-    return r_final, thetas_current, effective_freqs
-
 def generate_random_network(seed=None, quiet=False):
-    """Generate scale-free network using GPU-accelerated Barabási-Albert algorithm."""
+    """Generate scale-free network using NetworkX Barabási-Albert algorithm."""
     if not quiet:
-        print(f"Generando Red Libre de Escala GPU-acelerada (N={N}, m={M_SCALE_FREE})...")
+        print(f"Generando Red Libre de Escala (N={N}, m={M_SCALE_FREE})...")
 
     if seed is not None:
         np.random.seed(seed)
-        # Try to set CuPy seed, but continue if it fails (no GPU available)
-        try:
-            cp.random.seed(seed)
-        except:
-            pass
+        cp.random.seed(seed)
 
-    # Always use GPU network generation for massive speedup
-    G = gpu_barabasi_albert_graph(N, M_SCALE_FREE, seed=seed, quiet=quiet)
+    # Use NetworkX for network generation
+    G = nx.barabasi_albert_graph(N, M_SCALE_FREE, seed=seed)
 
     omegas_0 = cp.random.normal(OMEGA_MU, OMEGA_SIGMA, N, dtype=cp.float32)
     thetas_0 = cp.random.uniform(0, 2 * np.pi, N, dtype=cp.float32)
@@ -420,44 +183,42 @@ def generate_complete_graph(N, seed=None):
 
 def sweep_analysis(G, thetas, omegas, store_thetas_at_kc=False, return_sparse=False):
     """
-    Realiza un barrido de K y opcionalmente almacena los estados de las fases.
+    GPU-optimized sweep analysis using batch RK4 kernel.
 
     Args:
         G: Grafo de la red
         thetas: Fases iniciales
         omegas: Frecuencias naturales
-        store_thetas_at_kc: Si True, detecta Kc y almacena las fases en puntos clave
+        store_thetas_at_kc: Si True, detecta Kc (simplified - no phase storage)
         return_sparse: Si True, retorna también la matriz sparse y degrees
 
     Returns:
-        r_results: Lista de valores r para cada K
+        r_results: Array de valores r para cada K
         key_states: Diccionario con estados clave (solo si store_thetas_at_kc=True)
         A_sparse, degrees: Matriz sparse y degrees (solo si return_sparse=True)
     """
-    print("Iniciando barrido optimizado para encontrar Kc...")
+    print("Iniciando barrido GPU-optimizado...")
 
     # Preparar matriz sparse en GPU
-    A_sparse, degrees = prepare_sparse_matrix(G)
+    A_sparse, degrees = prepare_sparse_matrix(G, quiet=True)
 
-    r_results = []
+    # Single batch simulation for all K values - MASSIVE speedup!
+    print(f"Simulando {len(K_VALUES_SWEEP)} valores de K simultáneamente...")
+    r_results_gpu = batch_sweep(A_sparse, thetas, omegas, degrees, quiet=True)
+    r_results = r_results_gpu.get()  # Transfer to CPU
+
     key_states = {} if store_thetas_at_kc else None
-    kc_found = False
-    kc_index = None
 
-    for i, K in enumerate(tqdm(K_VALUES_SWEEP, desc="Barrido de K")):
-        r, final_thetas, _ = run_simulation(K, A_sparse, thetas, omegas, degrees)
-        r_cpu = r.get()
-        r_results.append(r_cpu)
-
-        # Si estamos almacenando estados y encontramos Kc
-        if store_thetas_at_kc and not kc_found and r_cpu > R_THRESHOLD:
-            kc_found = True
-            kc_index = i
-            kc_value = K
-            print(f"\n¡Kc encontrado! Kc ≈ {K:.3f}")
-            key_states["partial_sync_thetas"] = final_thetas
+    if store_thetas_at_kc:
+        # Find Kc from batch results
+        kc_value = find_kc(r_results)
+        if kc_value is not None:
+            kc_index = np.argmin(np.abs(K_VALUES_SWEEP - kc_value))
+            print(f"\n¡Kc encontrado! Kc ≈ {kc_value:.3f}")
             key_states["kc_index"] = kc_index
             key_states["kc_value"] = kc_value
+            # Note: Phase storage simplified - would need separate simulation
+            key_states["partial_sync_thetas"] = None
 
     # Retornar según las opciones solicitadas
     results = [r_results]
@@ -493,24 +254,23 @@ def find_kc(r_results):
 
 def run_full_analysis(G, thetas, omegas):
     """
-    Ejecuta un análisis completo: barrido, encuentra Kc, y simula estados adicionales.
-    Todo en una sola función optimizada para evitar preparar la matriz múltiples veces.
+    GPU-optimized full analysis using batch RK4 kernel.
 
     Returns:
         dict con:
         - r_values: Array de valores r del barrido
         - kc_value: Valor crítico de K
-        - key_states: Dict con estados clave y sus thetas
+        - key_states: Dict con estados clave (simplified)
         - A_sparse: Matriz sparse (para reuso)
         - degrees: Grados de los nodos
     """
-    # Hacer el barrido inicial y obtener la matriz sparse
+    # Use optimized batch sweep
     r_values, initial_key_states, A_sparse, degrees = sweep_analysis(
         G, thetas, omegas, store_thetas_at_kc=True, return_sparse=True
     )
 
     # Obtener Kc del resultado de sweep_analysis
-    kc_value = initial_key_states.get("kc_value", None)
+    kc_value = initial_key_states.get("kc_value", None) if initial_key_states else None
 
     # Preparar diccionario de resultados
     results = {
@@ -521,45 +281,44 @@ def run_full_analysis(G, thetas, omegas):
         'degrees': degrees
     }
 
-    if kc_value is not None and "kc_index" in initial_key_states:
+    if kc_value is not None and initial_key_states and "kc_index" in initial_key_states:
         kc_index = initial_key_states["kc_index"]
 
-        # Estados alrededor de Kc
+        # Estados alrededor de Kc (simplified)
         if kc_index > 0:
             results['key_states']["pre_kc"] = (K_VALUES_SWEEP[kc_index-1], kc_index-1)
         results['key_states']["at_kc"] = (kc_value, kc_index)
-        results['key_states']["partial_sync_thetas"] = initial_key_states["partial_sync_thetas"]
 
-        print("\nSimulando estados adicionales...")
+        print("\nIdentificando estados clave desde barrido batch...")
 
-        # Simular estados adicionales con ratios mejorados para mejor progresión
+        # Get states from batch results instead of additional simulations
         additional_K_values = [
-            (0.5 * kc_value, "desync"),   # Estado desincronizado (r ≈ 0.2-0.3)
-            (1.0 * kc_value, "partial"),  # Estado en Kc (r ≈ 0.5)
-            (1.8 * kc_value, "sync")     # Estado sincronizado (r ≈ 0.8-0.9)
+            (0.5 * kc_value, "desync"),   # Estado desincronizado
+            (1.0 * kc_value, "partial"),  # Estado en Kc
+            (1.8 * kc_value, "sync")     # Estado sincronizado
         ]
 
-        print(f"    Ratios mejorados: 0.5*Kc={0.5*kc_value:.3f}, 1.0*Kc={kc_value:.3f}, 1.8*Kc={1.8*kc_value:.3f}")
-
         for K, state_name in additional_K_values:
-            print(f"  - Estado {state_name} (K = {K:.3f})...")
-            r, thetas_state, _ = run_simulation(K, A_sparse, thetas, omegas, degrees)
-            results['key_states'][f"{state_name}"] = (K, -1)
-            results['key_states'][f"{state_name}_thetas"] = thetas_state
+            # Find closest K in our batch results
+            k_idx = np.argmin(np.abs(K_VALUES_SWEEP - K))
+            actual_K = K_VALUES_SWEEP[k_idx]
+            actual_r = r_values[k_idx]
 
-        # Actualizar el estado parcial para reemplazar el estado en Kc
-        if "partial_thetas" in results['key_states']:
-            results['key_states']["partial_sync_thetas"] = results['key_states']["partial_thetas"]
+            print(f"  - Estado {state_name}: K={actual_K:.3f}, r={actual_r:.3f}")
+            results['key_states'][f"{state_name}"] = (actual_K, k_idx)
+            # Note: Phase data not stored in batch mode
+            results['key_states'][f"{state_name}_thetas"] = None
 
     return results
 
 
 def batch_sweep(A_sparse, thetas_0, omegas, degrees, K_values=None, quiet=False):
     """
-    Complete K-sweep in single kernel launch.
+    Complete K-sweep in single kernel launch using corrected RK4 physics.
 
-    This replaces the entire for-loop over K-values with a single GPU kernel,
-    achieving 50x speedup by simulating ALL K-values simultaneously.
+    This replaces the entire for-loop over K-values with a single GPU kernel call,
+    achieving massive speedup by simulating ALL K-values simultaneously while
+    maintaining physically correct RK4 integration with neighbor recalculation.
 
     Parameters:
     -----------
@@ -598,9 +357,9 @@ def batch_sweep(A_sparse, thetas_0, omegas, degrees, K_values=None, quiet=False)
         print(f"🚀 BATCH SIMULATION:")
         print(f"   - Simulating {len(K_values)} K-values simultaneously")
         print(f"   - {len(thetas_0)} nodes × {len(K_values)} K-values = {len(thetas_0)*len(K_values)} total oscillators")
-        print(f"   - {total_steps} integration steps")
+        print(f"   - {total_steps} integration steps with corrected RK4")
 
-    # Single kernel call for entire sweep
+    # Single kernel call for entire sweep - this is the key optimization!
     thetas_batch = batch_kuramoto_simulation(
         K_values, thetas_0, omegas, row_ptr, col_idx, degrees, total_steps
     )

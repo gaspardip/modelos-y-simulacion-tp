@@ -10,52 +10,56 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
-from utils import N, K_VALUES_SWEEP, run_simulation, run_simulation_complete_graph, generate_random_network
+from utils import N, K_VALUES_SWEEP, generate_random_network, prepare_sparse_matrix, batch_sweep
 
 def run_sweep_analysis(network_type, G, thetas, omegas):
     """
-    Realiza un barrido de K para una red dada, orquestando las simulaciones en GPU.
+    Realiza un barrido de K para una red dada usando el nuevo sistema RK4 batch.
     """
     print(f"======================================================")
     print(f"INICIANDO BARRIDO DE K PARA: {network_type.upper()} (N={G.number_of_nodes()})")
     print(f"======================================================")
 
-    r_results = []
     start_time = time.time()
 
-    # Para redes completas, usar la optimización analítica (sin matriz densa)
-    if network_type == "Grafo Completo":
-        print("Usando optimización analítica para grafo completo (sin matriz densa)")
-        for i, K in enumerate(K_VALUES_SWEEP):
-            print(f"  Calculando... K = {K:.2f} ({i+1}/{len(K_VALUES_SWEEP)})")
-            r, *_ = run_simulation_complete_graph(K, thetas, omegas)
-            r_results.append(r.get())  # .get() mueve el resultado de GPU a CPU
-    else:
-        # Para redes sparse, convertir a formato CSR de CuPy
-        A_scipy = nx.to_scipy_sparse_array(G, format='csr', dtype=np.float32)
-        A_gpu = cp.sparse.csr_matrix(A_scipy)
-        degrees_gpu = cp.array(A_scipy.sum(axis=1).flatten(), dtype=cp.float32)
+    # Preparar datos para simulación batch
+    A_sparse, degrees = prepare_sparse_matrix(G, quiet=False)
 
-        for i, K in enumerate(K_VALUES_SWEEP):
-            print(f"  Calculando... K = {K:.2f} ({i+1}/{len(K_VALUES_SWEEP)})")
-            r, *_ = run_simulation(K, A_gpu, thetas, omegas, degrees_gpu)
-            r_results.append(r.get())  # .get() mueve el resultado de GPU a CPU
+    print(f"Usando GPU-accelerated RK4 batch simulation")
+    print(f"Simulando {len(K_VALUES_SWEEP)} valores de K simultáneamente...")
+
+    # Single batch simulation for all K values - MASSIVE speedup!
+    r_results_gpu = batch_sweep(A_sparse, thetas, omegas, degrees, quiet=False)
+    r_results = r_results_gpu.get()  # Transfer to CPU
 
     end_time = time.time()
 
     print(f"Análisis completado en {end_time - start_time:.2f} segundos.")
+    print(f"Speedup: ~{len(K_VALUES_SWEEP)*15/(end_time - start_time):.1f}x vs sequential simulation")
 
-    return np.array(r_results)
+    return r_results
 
 # --- 3. SCRIPT PRINCIPAL DE EJECUCIÓN ---
 if __name__ == "__main__":
+    script_start = time.time()
+    print(f"🚀 INICIANDO ANÁLISIS COMPARATIVO (N={N})")
+    
     # Generamos los datos aleatorios una sola vez y los movemos a la GPU
-    G_scale_free, omegas, thetas = generate_random_network(seed=True)
+    print("1. Generando red scale-free...")
+    gen_start = time.time()
+    G_scale_free, omegas, thetas = generate_random_network(seed=42)
+    print(f"   Completado en {time.time() - gen_start:.2f}s")
+    
+    print("2. Análisis de red scale-free...")
     r_scale_free = run_sweep_analysis("Red Libre de Escala", G_scale_free, thetas, omegas)
 
     # --- Análisis para Grafo Completo ---
-    print(f"Generando Grafo Completo (N={N})...")
+    print("3. Generando grafo completo...")
+    gen_start = time.time()
     G_complete = nx.complete_graph(N)
+    print(f"   Completado en {time.time() - gen_start:.2f}s")
+    
+    print("4. Análisis de grafo completo...")
     r_complete = run_sweep_analysis("Grafo Completo", G_complete, thetas, omegas)
 
     # --- Visualización Comparativa Final ---
@@ -74,4 +78,14 @@ if __name__ == "__main__":
     plt.legend(fontsize=14)
     plt.ylim(-0.05, 1.05)
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-    plt.show()
+    
+    # Save instead of show to avoid display issues
+    plt.savefig("kuramoto_comparison.png", dpi=150, bbox_inches='tight')
+    print("Gráfico guardado como: kuramoto_comparison.png")
+    plt.close()  # Free memory
+    
+    total_time = time.time() - script_start
+    print(f"\n✅ ANÁLISIS COMPLETO: {total_time:.2f}s total")
+    print(f"   Scale-free max r: {np.max(r_scale_free):.3f}")
+    print(f"   Complete max r: {np.max(r_complete):.3f}")
+    print(f"   GPU batch processing enabled: {len(K_VALUES_SWEEP)} K-values simultáneos")

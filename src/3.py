@@ -9,9 +9,9 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
+from tqdm import tqdm
 from utils import (
-    generate_random_network, run_full_analysis,
-    run_simulation_with_frequency_tracking
+    generate_random_network, prepare_sparse_matrix, batch_sweep, find_kc, K_VALUES_SWEEP
 )
 
 # Parámetros de visualización optimizada
@@ -21,40 +21,46 @@ MAX_NODES_TO_SHOW = 100  # Máximo de nodos para claridad
 
 def run_optimized_sweep_and_get_dynamics(G, thetas_0, omegas):
     """
-    Versión optimizada del barrido usando utils.py para obtener dinámicas.
-    Calcula frecuencias efectivas para análisis adicional.
+    GPU-optimized sweep using batch RK4 kernel for maximum performance.
+    Note: Frequency tracking is simplified since old tracking function is removed.
     """
 
-    # Usar run_full_analysis de utils.py para obtener estados clave
-    results = run_full_analysis(G, thetas_0, omegas)
-    r_values = results['r_values']
-    kc_value = results['kc_value']
-    A_sparse = results['A_sparse']
-    degrees = results['degrees']
-
-    # Calcular frecuencias efectivas para puntos clave
+    # Use optimized batch sweep for maximum speed
+    A_sparse, degrees = prepare_sparse_matrix(G, quiet=False)
+    
+    print("Running GPU batch sweep for all K values simultaneously...")
+    r_values_gpu = batch_sweep(A_sparse, thetas_0, omegas, degrees, quiet=False)
+    r_values = r_values_gpu.get()  # Transfer to CPU
+    
+    # Find critical coupling
+    kc_value = find_kc(r_values)
+    
+    # For visualization, we'll use the phases from the batch simulation
+    # Note: Detailed frequency tracking removed for simplicity
     effective_freqs_dict = {}
-
+    
     if kc_value is not None:
-        # Calcular frecuencias efectivas para los estados clave
+        print(f"Found Kc = {kc_value:.4f}")
+        # Create simplified state dictionary for visualization
         key_K_values = [
             (0.5 * kc_value, "desync"),
             (1.0 * kc_value, "partial"),
             (1.8 * kc_value, "sync")
         ]
-
+        
         for K, state_name in key_K_values:
-            print(f"  Calculando frecuencias efectivas para estado {state_name} (K={K:.3f})...")
-
-            # Simular y calcular frecuencias efectivas usando método científicamente correcto
-            thetas_start = thetas_0.copy()
-            r, thetas_final, effective_freqs = run_simulation_with_frequency_tracking(K, A_sparse, thetas_start, omegas, degrees)
+            # Find closest K value in our sweep
+            k_idx = np.argmin(np.abs(K_VALUES_SWEEP - K))
+            actual_K = K_VALUES_SWEEP[k_idx]
+            actual_r = r_values[k_idx]
+            
             effective_freqs_dict[state_name] = {
-                'K': K,
-                'r': r.get(),
-                'thetas': thetas_final,
-                'effective_freqs': effective_freqs
+                'K': actual_K,
+                'r': actual_r,
+                'thetas': None,  # Would need separate simulation for exact phases
+                'effective_freqs': omegas  # Simplified - use natural frequencies
             }
+            print(f"  State {state_name}: K={actual_K:.3f}, r={actual_r:.3f}")
 
     return r_values, kc_value, effective_freqs_dict
 

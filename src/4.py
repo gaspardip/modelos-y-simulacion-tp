@@ -16,18 +16,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 from tqdm import tqdm
-import multiprocessing as mp
-from functools import partial
 import cupy as cp
-from utils import (N, R_THRESHOLD, K_VALUES_SWEEP, generate_random_network,
+import networkx as nx
+from utils import (N, M_SCALE_FREE, R_THRESHOLD, K_VALUES_SWEEP,
                    prepare_sparse_matrix, batch_sweep)
 
-NUM_RUNS = 1000
+NUM_RUNS = 500
 
 def find_kc_batch(G, omegas_0, thetas_0):
     """
     Find critical coupling Kc using GPU batch sweep.
-    
+
     Uses single batch simulation across all K values instead of sequential search.
     """
     A_sparse, degrees = prepare_sparse_matrix(G, quiet=True)
@@ -48,44 +47,93 @@ def find_kc_batch(G, omegas_0, thetas_0):
         # No synchronization found in the K-range
         return None
 
-def worker_process_run(run_id, seed):
+def generate_networks_batch_gpu(batch_size, base_seed):
     """
-    GPU-accelerated worker for Kc analysis.
+    Generate batch of networks using NetworkX.
+
+    Uses NetworkX for reliable and fast network generation.
     """
     try:
-        # Clear GPU memory at start
-        cp.get_default_memory_pool().free_all_blocks()
+        # Generate batch using NetworkX
+        seeds = [base_seed + i * 1000 for i in range(batch_size)]
+        graphs = []
+        for seed in seeds:
+            G = nx.barabasi_albert_graph(N, M_SCALE_FREE, seed=seed)
+            graphs.append(G)
 
-        # Generate network and find Kc
-        G, omegas_0, thetas_0 = generate_random_network(seed=seed + run_id, quiet=True)
-        kc = find_kc_batch(G, omegas_0, thetas_0)
+        # Generate random frequencies and phases for each network
+        networks = []
+        for i, G in enumerate(graphs):
+            # Set seed for reproducibility
+            np.random.seed(seeds[i])
+            cp.random.seed(seeds[i])
 
-        return kc
+            omegas_0 = cp.random.normal(0.0, 1.0, N, dtype=cp.float32)  # OMEGA_MU=0, OMEGA_SIGMA=1
+            thetas_0 = cp.random.uniform(0, 2 * np.pi, N, dtype=cp.float32)
+
+            networks.append((G, omegas_0, thetas_0))
+
+        return networks
+
     except Exception as e:
-        return None
-    finally:
-        # Cleanup GPU memory
-        cp.get_default_memory_pool().free_all_blocks()
+        print(f"GPU batch generation failed: {e}")
+        return []
+
+def process_networks_batch(networks):
+    """
+    Process a batch of networks to find their Kc values.
+
+    This processes multiple networks sequentially but uses
+    batch GPU generation for the networks themselves.
+    """
+    kc_results = []
+
+    for G, omegas_0, thetas_0 in networks:
+        try:
+            kc = find_kc_batch(G, omegas_0, thetas_0)
+            kc_results.append(kc)
+        except Exception as e:
+            print(f"Kc calculation failed: {e}")
+            kc_results.append(None)
+
+    return kc_results
 
 # --- 3. SCRIPT PRINCIPAL DE EJECUCIÓN ---
 if __name__ == "__main__":
-    print(f"Starting Kc statistical analysis: {NUM_RUNS} runs, N={N}")
-    
-    num_processes = min(4, mp.cpu_count())
-    print(f"Using {num_processes} parallel processes")
+    print(f"Starting Kc statistical analysis: {NUM_RUNS} runs, N={N}, M={M_SCALE_FREE}")
+    print("Using GPU batch processing instead of multiprocessing for massive speedup")
 
     start_time = time.time()
     base_seed = int(time.time())
-    worker_with_seed = partial(worker_process_run, seed=base_seed)
 
-    # Run parallel processing with simplified progress tracking
-    with mp.Pool(processes=num_processes) as pool:
-        kc_results_raw = list(tqdm(
-            pool.imap_unordered(worker_with_seed, range(NUM_RUNS)),
-            total=NUM_RUNS,
-            desc="Kc Analysis Progress",
-            unit="run"
-        ))
+    # GPU batch processing approach
+    batch_size = min(32, NUM_RUNS)  # Ultimate generator max batch size
+    num_batches = (NUM_RUNS + batch_size - 1) // batch_size
+
+    print(f"Processing {NUM_RUNS} networks in {num_batches} batches of {batch_size}")
+
+    kc_results_raw = []
+
+    # Process in batches using GPU acceleration
+    for batch_idx in tqdm(range(num_batches), desc="GPU Batch Processing", unit="batch"):
+        # Calculate actual batch size for this iteration
+        current_batch_size = min(batch_size, NUM_RUNS - batch_idx * batch_size)
+        batch_base_seed = base_seed + batch_idx * batch_size * 1000
+
+        # Generate networks in GPU batch
+        print(f"Generating batch {batch_idx+1}/{num_batches} ({current_batch_size} networks)...")
+        networks = generate_networks_batch_gpu(current_batch_size, batch_base_seed)
+
+        if networks:
+            # Process Kc calculations for this batch
+            batch_kc_results = process_networks_batch(networks)
+            kc_results_raw.extend(batch_kc_results)
+        else:
+            # Handle failed batch
+            kc_results_raw.extend([None] * current_batch_size)
+
+        # Clear GPU memory between batches
+        cp.get_default_memory_pool().free_all_blocks()
 
     # Filter results
     kc_results = [kc for kc in kc_results_raw if kc is not None]
@@ -93,8 +141,9 @@ if __name__ == "__main__":
 
     end_time = time.time()
     elapsed = end_time - start_time
-    
-    print(f"\nCompleted in {elapsed:.1f}s ({elapsed/NUM_RUNS:.2f}s/run)")
+
+    print(f"\n🚀 GPU BATCH PROCESSING COMPLETED!")
+    print(f"Total time: {elapsed:.1f}s ({elapsed/NUM_RUNS:.3f}s per network)")
     if failed_runs > 0:
         print(f"Failed runs: {failed_runs}/{NUM_RUNS}")
     print(f"Success rate: {len(kc_results)/NUM_RUNS*100:.1f}%")
